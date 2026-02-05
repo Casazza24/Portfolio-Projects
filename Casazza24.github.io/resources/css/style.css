@@ -1,0 +1,252 @@
+/* Dark Mode Color Scheme */
+:root {
+    --bg-dark: #0a1628;
+    --bg-darker: #050d18;
+    --accent-teal: #00d9ff;
+    --accent-green: #00ff88;
+    --text-light: #e8f0f2;
+    --text-muted: #a0b3b8;
+    --card-bg: #132337;
+  }
+  
+  body {
+    background: linear-gradient(135deg, var(--bg-darker) 0%, var(--bg-dark) 100%);
+    color: var(--text-light);
+    min-height: 100vh;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  }
+  
+  /* Navbar Styling */
+  .navbar {
+    background: rgba(19, 35, 55, 0.95) !important;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 20px rgba(0, 217, 255, 0.1);
+  }
+  
+  .navbar-brand {
+    font-weight: bold;
+    font-size: 1.5rem;
+    color: var(--accent-teal) !important;
+  }
+  
+  .nav-link {
+    color: var(--text-light) !important;
+    transition: all 0.3s ease;
+    position: relative;
+  }
+  
+  .nav-link::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 0;
+    height: 2px;
+    background: var(--accent-green);
+    transform: translateX(-50%);
+  }
+  
+  .nav-link:hover::after {
+    width: 80%;
+  }
+   /* far right icon */
+   .bi-crosshair {
+    transition: all 0.3s ease;
+  }
+  .bi-crosshair:hover {
+    color: var(--accent-teal);
+    transform: rotate(72deg) scale(1.2);
+  }
+  
+  /* Main Content */
+  main {
+    max-width: 1200px;
+    margin: 50px auto;
+    padding: 0 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 40px;
+    align-items: flex-start;
+  }
+  
+  /* Profile Image Section */
+  .resImg {
+    flex: 0 0 auto;
+  }
+  
+  #profile-image img {
+    border-radius: 20px;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+  }
+  
+  #profile-image img:hover {
+    transform: scale(1.05);
+    box-shadow: 0 15px 50px rgba(0, 217, 255, 0.5),
+                0 0 30px rgba(0, 255, 136, 0.3);
+  }
+  
+  /* About Me Section */
+  #about-me {
+    flex: 1;
+    min-width: 300px;
+    background: var(--card-bg);
+    padding: 30px;
+    border-radius: 15px;
+    border: 1px solid rgba(0, 217, 255, 0.2);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  }
+  
+  #about-me h2 {
+    color: var(--accent-teal);
+    font-size: 2.5rem;
+    margin-bottom: 30px;
+  }
+  
+  #about-me h5 {
+    color: var(--accent-green);
+    font-size: 1.3rem;
+    margin-top: 25px;
+    margin-bottom: 15px;
+  }
+  
+  #about-me p {
+    color: var(--text-muted);
+    line-height: 1.8;
+    font-size: 1rem;
+  }
+  
+  #about-me > div > div {
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid rgba(0, 217, 255, 0.1);
+  }
+  
+  #about-me > div > div:last-child {
+    border-bottom: none;
+  }
+.hobby-card {
+    background: var(--card-bg);
+    padding: 25px;
+    border-radius: 15px;
+    border: 1px solid rgba(0, 217, 255, 0.2);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .hobby-card h5 {
+    color: var(--accent-green);
+    margin-bottom: 15px;
+    margin-top: 15px;
+  }
+  
+  .hobby-card p {
+    color: var(--text-muted);
+    line-height: 1.8;
+    flex-grow: 1;
+  }
+  
+  .hobby-image {
+    width: 100%;
+    height: 250px;
+    object-fit: cover;
+    border-radius: 10px;
+  }
+
+  
+  .accordion-item {
+    background-color: var(--card-bg);
+    border: 1px solid rgba(0, 217, 255, 0.2);
+    margin-bottom: 10px;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  
+  .accordion-button {
+    background-color: var(--card-bg);
+    color: var(--text-light);
+    font-weight: 500;
+    font-size: 1.1rem;
+  }
+  
+  .accordion-button:not(.collapsed) {
+    background-color: rgba(0, 217, 255, 0.1);
+    color: var(--accent-teal);
+    box-shadow: none;
+  }
+  
+  .accordion-button:hover {
+    background-color: rgba(0, 217, 255, 0.05);
+  }
+  
+  .accordion-button:focus {
+    border-color: var(--accent-teal);
+    box-shadow: 0 0 0 0.25rem rgba(0, 217, 255, 0.25);
+  }
+  
+  .accordion-button::after {
+    filter: brightness(0) invert(1);
+  }
+  
+  .accordion-body {
+    background-color: rgba(10, 217, 255, 0.05);
+    color: var(--text-muted);
+    padding: 20px;
+    line-height: 1.8;
+  }
+  .download-button {
+    background: linear-gradient(135deg, var(--accent-teal), var(--accent-green));
+    color: var(--bg-darker);
+    border: none;
+    padding: 15px 40px;
+    border-radius: 25px;
+    font-size: 1.1rem;
+    font-weight: bold;
+    transition: all 0.3s ease;
+    display: block;
+    margin: 40px auto;
+    text-align: center;
+  }
+  
+  .download-button:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(0, 217, 255, 0.6);
+  }
+  
+  .download-button:active {
+    transform: translateY(-1px);
+  }
+  /* Footer */
+  footer {
+    background: var(--card-bg) !important;
+    margin-top: 80px !important;
+  }
+  
+  footer a {
+    color: var(--text-light) !important;
+    transition: all 0.3s ease;
+  }
+  
+  footer a:hover {
+    color: var(--accent-teal) !important;
+  }
+  
+  footer .bi {
+    margin-right: 5px;
+    font-size: 1.2rem;
+  }
+
+  
+  /* Responsive */
+  @media (max-width: 768px) {
+    main {
+      flex-direction: column;
+      align-items: center;
+    }
+  
+    #about-me {
+      width: 100%;
+    }
+  }
