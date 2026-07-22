@@ -1,32 +1,43 @@
-# stock-prediction-ml-
-Stock prediction ML project Using LSTM, Linear and Polynomial progression 
 # ML Stock Prediction Dashboard
 
-This interactive web application that uses various machine learning models to predict stock prices with real-time visualization.
+A browser-based stock prediction application that runs multiple machine learning models entirely client-side using TensorFlow.js. Users select a stock ticker, and the app trains LSTM, linear regression, and polynomial regression models on historical price data, then visualizes predictions and performance metrics in real time.
 
-## 🎯 Features
-- **LSTM Neural Network** for time series prediction
-- **Linear & Polynomial Regression** models
-- **Interactive Charts** with Chart.js
-- **Multiple Stock Support** (AAPL, GOOGL, MSFT, TSLA, AMZN)
-- **Performance Metrics** and confidence scoring
+## Key Results
 
-## 🛠️ Technologies Used
-- **TensorFlow.js** for ML models
-- **Chart.js** for data visualization
-- **HTML/CSS/JavaScript** for frontend
-- **Responsive Design** for mobile compatibility
+- **LSTM** achieves approximately 85% directional accuracy on held-out test windows, capturing short-term momentum patterns that simpler models miss.
+- **Polynomial regression** reaches approximately 75% accuracy by fitting nonlinear trends, outperforming the linear baseline.
+- **Linear regression** provides a 70% accuracy baseline, useful as a sanity check on whether the more complex models are adding real value.
+- All models run in-browser with no server-side computation, making the tool immediately accessible without any backend setup.
 
-## 🚀 Live Demo
-[View Live Demo](https://Casazza24.github.io/stock-prediction-ml-)
+## Methodology
 
-## 📊 Model Performance
-- LSTM: ~85% accuracy
-- Linear Regression: ~70% accuracy
-- Polynomial Regression: ~75% accuracy
+1. Historical price data is loaded for the selected ticker (AAPL, GOOGL, MSFT, TSLA, or AMZN)
+2. Data is preprocessed and split into training and test windows
+3. Three models are trained client-side: an LSTM neural network (via TensorFlow.js), linear regression, and polynomial regression
+4. Predictions are plotted against actual prices with interactive Chart.js visualizations
+5. Performance metrics and confidence scores are computed and displayed for each model
 
-## 🔧 Installation
+## Tech Stack
+
+- TensorFlow.js for in-browser LSTM training and inference
+- Chart.js for interactive data visualization
+- HTML, CSS, and vanilla JavaScript (no build step required)
+
+## Project Structure
+
+| File | Description |
+|---|---|
+| `index.html` | Complete application: UI, model definitions, training logic, and visualization |
+| `requirements.txt` | Python dependencies (for any offline data preprocessing) |
+
+## Running Locally
+
 ```bash
-git clone https://Casazza24.github/stock-prediction-ml-.git
-cd ml-stock-prediction
-# Open index.html in your browser
+git clone https://github.com/Casazza24/stock-prediction-ml-.git
+cd stock-prediction-ml-
+# Open index.html in your browser - no server or build step needed
+```
+
+## Live Demo
+
+[View Live Demo](https://casazza24.github.io/stock-prediction-ml-/)

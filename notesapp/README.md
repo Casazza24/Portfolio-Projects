@@ -1,16 +1,43 @@
-# React + Vite
+# Notes App
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A full-stack notes application built with React and AWS Amplify Gen 2. Authenticated users can create, view, and delete notes with optional image attachments. The app uses Cognito for authentication, DynamoDB for data storage, and S3 for image uploads, with per-user data isolation so each user only sees their own notes.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- User authentication via AWS Cognito (sign-up, sign-in, password recovery)
+- Create notes with a name, description, and optional image
+- View and delete existing notes
+- Images stored in S3 and served via signed URLs
+- Owner-based authorization: each user's data is fully isolated
 
-## React Compiler
+## Tech Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- React 19 with Vite as the build tool and dev server
+- AWS Amplify Gen 2 backend (Cognito, DynamoDB, S3)
+- `@aws-amplify/ui-react` for the authentication flow and UI components
+- ESLint for linting
 
-## Expanding the ESLint configuration
+## Project Structure
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+| File | Description |
+|---|---|
+| `src/App.jsx` | Main application component: note creation form, note list, image upload/display, sign-out |
+| `amplify/auth/resource.ts` | Cognito user pool configuration |
+| `amplify/data/resource.ts` | Data model and per-owner authorization rules |
+| `amplify/storage/resource.ts` | S3 storage configuration for image uploads |
+| `amplify/backend.ts` | Backend entry point wiring auth, data, and storage together |
+
+## Running Locally
+
+```bash
+npm install
+npm run dev
+```
+
+An Amplify backend must be deployed (or running via `amplify sandbox`) so that `amplify_outputs.json` exists at the project root. The app reads this file on startup to configure its connection to AWS services.
+
+## Build
+
+```bash
+npm run build
+```
