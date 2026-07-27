@@ -1,5 +1,7 @@
 # RL Bond Market Making
 
+**[Live Demo](https://casazza24.github.io/Portfolio-Projects/rl-bond-market-making/demo.html)**
+
 A reinforcement learning approach to optimal market making, benchmarked directly against the analytical and finite-difference solution to a classical stochastic control problem. Built as a final project for CSCI 3202 (Artificial Intelligence). A single-agent actor-critic learns to quote bid and ask spreads on a simulated bond, is checked against the theoretical optimum, and is then extended to a five-bond portfolio where the state space makes exact solution infeasible and only the learned policy remains tractable.
 
 ## Problem Statement
@@ -12,7 +14,7 @@ This problem has a closed-form solution for a single bond via the Hamilton-Jacob
 
 **Finite-difference solver.** The FD solver discretizes the HJB equation over a time grid and an inventory grid ($q \in \{-q_{\max}, \ldots, q_{\max}\}$), sets the terminal condition $V(T, q) = -\gamma q^2$, and works backward in time. At each grid point it searches over candidate bid/ask spread pairs, computes the expected value under the Bellman equation using the order arrival model, and stores the value-maximizing quotes. This produces both a numerical value function $V(t, q)$ and the corresponding optimal quoting policy, which also has a known closed form:
 
-$$\delta^{\text{bid}*} = \frac{1}{k}\ln\left(1 + \frac{k}{\gamma}\right) + \gamma(T-t)q, \qquad \delta^{\text{ask}*} = \frac{1}{k}\ln\left(1 + \frac{k}{\gamma}\right) - \gamma(T-t)q$$
+$$\delta^{\text{bid}\ast} = \frac{1}{k}\ln\left(1 + \frac{k}{\gamma}\right) + \gamma(T-t)q, \qquad \delta^{\text{ask}\ast} = \frac{1}{k}\ln\left(1 + \frac{k}{\gamma}\right) - \gamma(T-t)q$$
 
 **RL agent.** The agent is an actor-critic architecture. The actor is a policy network that maps the state (time remaining, normalized inventory, normalized price) to the parameters of a Gaussian distribution over bid/ask spreads, passed through a softplus so quotes are always positive; actions are sampled from this distribution during training to encourage exploration. The critic is a separate value network trained to predict expected return from a given state, used to compute the advantage that drives the actor's policy gradient update. Training simulates episodes under the same price dynamics and order arrival model as the FD solver, accumulates per-step inventory penalties and a terminal wealth-minus-penalty reward, and updates both networks via policy gradient (actor) and mean-squared-error regression to realized returns (critic).
 
