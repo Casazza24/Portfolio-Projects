@@ -219,3 +219,63 @@ def correlation_heatmap(returns_df: pd.DataFrame) -> go.Figure:
         margin=dict(l=40, r=20, t=40, b=40),
     )
     return fig
+
+
+def rolling_sentiment_chart(
+    sent_factor: pd.Series, portfolio_cum: pd.Series, window: int = 60
+) -> go.Figure:
+    rolling_sent = sent_factor.rolling(window).mean()
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=portfolio_cum.index, y=portfolio_cum.values,
+        mode="lines", name="Portfolio (cumulative)",
+        line=dict(color=COLORS["portfolio"], width=2),
+        yaxis="y",
+    ))
+    fig.add_trace(go.Scatter(
+        x=rolling_sent.index, y=rolling_sent.values,
+        mode="lines", name=f"SENT Factor ({window}d avg)",
+        line=dict(color="#FFA15A", width=2),
+        yaxis="y2",
+    ))
+    fig.update_layout(
+        title=f"Portfolio Return vs Rolling Sentiment Factor ({window}-day)",
+        yaxis=dict(title="Cumulative Return", side="left"),
+        yaxis2=dict(title="Avg SENT Factor Return", side="right", overlaying="y"),
+        **LAYOUT_DEFAULTS,
+        height=420,
+    )
+    return fig
+
+
+def regime_risk_chart(regime_data: dict) -> go.Figure:
+    categories = ["VaR (95%)", "CVaR (95%)"]
+    high_vals = [regime_data.get("high_sentiment_var", 0) or 0,
+                 regime_data.get("high_sentiment_cvar", 0) or 0]
+    low_vals = [regime_data.get("low_sentiment_var", 0) or 0,
+                regime_data.get("low_sentiment_cvar", 0) or 0]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name=f"High Sentiment ({regime_data.get('n_high_days', 0)} days)",
+        x=categories, y=high_vals,
+        marker_color=COLORS["positive"],
+        text=[f"{v:.2%}" for v in high_vals],
+        textposition="outside",
+    ))
+    fig.add_trace(go.Bar(
+        name=f"Low Sentiment ({regime_data.get('n_low_days', 0)} days)",
+        x=categories, y=low_vals,
+        marker_color=COLORS["negative"],
+        text=[f"{v:.2%}" for v in low_vals],
+        textposition="outside",
+    ))
+    fig.update_layout(
+        title="Tail Risk by Sentiment Regime",
+        yaxis_title="Daily Return",
+        yaxis_tickformat=".2%",
+        barmode="group",
+        **LAYOUT_DEFAULTS,
+    )
+    return fig
