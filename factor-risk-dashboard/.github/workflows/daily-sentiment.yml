@@ -1,0 +1,68 @@
+name: Daily Sentiment Pipeline
+
+on:
+  schedule:
+    # 11:00 UTC = 6:00 AM ET, before market open
+    - cron: '0 11 * * 1-5'
+  workflow_dispatch: # allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  update-sentiment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache FinBERT model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: finbert-model-v1
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-sentiment-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scrape and scoring pipeline
+        run: |
+          python -c "
+          from ingestion.db import init_db
+          from ingestion.news_scraper import scrape_all_feeds
+          from ingestion.run_pipeline import run_scoring, run_factor_construction
+          from config.sentiment import SENTIMENT_DB_PATH, SP500_PROXY_TICKERS
+
+          init_db(SENTIMENT_DB_PATH)
+          known = set(SP500_PROXY_TICKERS)
+          n = scrape_all_feeds(SENTIMENT_DB_PATH, known)
+          print(f'Scraped {n} texts from RSS feeds')
+
+          scored = run_scoring(SENTIMENT_DB_PATH)
+          print(f'Scored {scored} texts')
+
+          days = run_factor_construction(SENTIMENT_DB_PATH)
+          print(f'Constructed {days} factor days')
+          "
+
+      - name: Commit updated sentiment DB
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/sentiment.db
+          if git diff --cached --quiet; then
+            echo "No changes to sentiment DB"
+          else
+            git commit -m "chore: daily sentiment pipeline update [skip ci]"
+            git push
+          fi
