@@ -16,11 +16,40 @@ COMMON_WORDS = {
     "OF", "A", "I", "Q1", "Q2", "Q3", "Q4", "VS",
 }
 
+COMPANY_TO_TICKER = {
+    "apple": "AAPL", "microsoft": "MSFT", "amazon": "AMZN", "nvidia": "NVDA",
+    "google": "GOOGL", "alphabet": "GOOGL", "meta": "META", "facebook": "META",
+    "tesla": "TSLA", "berkshire": "BRK-B", "unitedhealth": "UNH",
+    "johnson & johnson": "JNJ", "jpmorgan": "JPM", "visa": "V",
+    "procter & gamble": "PG", "exxon": "XOM", "home depot": "HD",
+    "mastercard": "MA", "chevron": "CVX", "merck": "MRK", "abbvie": "ABBV",
+    "eli lilly": "LLY", "lilly": "LLY", "pepsi": "PEP", "pepsico": "PEP",
+    "coca-cola": "KO", "costco": "COST", "broadcom": "AVGO", "walmart": "WMT",
+    "mcdonald": "MCD", "cisco": "CSCO", "accenture": "ACN", "abbott": "ABT",
+    "salesforce": "CRM", "thermo fisher": "TMO", "danaher": "DHR",
+    "nike": "NKE", "nextera": "NEE", "linde": "LIN", "texas instruments": "TXN",
+    "union pacific": "UNP", "raytheon": "RTX", "honeywell": "HON",
+    "lowe's": "LOW", "lowes": "LOW", "amgen": "AMGN", "ibm": "IBM",
+    "intel": "INTC", "qualcomm": "QCOM", "caterpillar": "CAT", "boeing": "BA",
+    "goldman sachs": "GS", "goldman": "GS", "american express": "AXP",
+    "blackrock": "BLK", "netflix": "NFLX", "amd": "AMD",
+    "advanced micro": "AMD", "palantir": "PLTR", "disney": "DIS",
+    "uber": "UBER", "airbnb": "ABNB", "coinbase": "COIN", "robinhood": "HOOD",
+    "gamestop": "GME", "snowflake": "SNOW", "spotify": "SPOT",
+}
+
+
 def _extract_tickers_from_headline(text, known_tickers=None) -> list[str]:
     candidates = set(TICKER_PATTERN.findall(text))
     candidates -= COMMON_WORDS
     if known_tickers:
         candidates &= known_tickers
+
+    text_lower = text.lower()
+    for company, ticker in COMPANY_TO_TICKER.items():
+        if company in text_lower:
+            candidates.add(ticker)
+
     return list(candidates)
 
 def scrape_rss_feed(feed_name, feed_url, db_path=SENTIMENT_DB_PATH, known_tickers=None) -> int:

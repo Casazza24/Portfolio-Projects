@@ -47,15 +47,19 @@ def run_scoring(db_path: str = SENTIMENT_DB_PATH) -> int:
     texts = [row["text"] for row in unscored]
     results = score_texts(texts)
 
+    scored = 0
     for row, result in zip(unscored, results):
+        if row["ticker"] is None:
+            continue
         insert_sentiment_score(
             db_path, row["id"], row["ticker"],
             result.positive, result.negative, result.neutral,
             model_version="finbert-v1",
         )
+        scored += 1
 
-    print(f"Scored {len(results)} texts.")
-    return len(results)
+    print(f"Scored {scored} texts ({len(results) - scored} skipped, no ticker).")
+    return scored
 
 
 def run_factor_construction(db_path: str = SENTIMENT_DB_PATH) -> int:

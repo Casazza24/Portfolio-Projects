@@ -1,4 +1,5 @@
 import datetime
+import os
 import re
 import praw
 from ingestion.db import init_db, insert_raw_text
@@ -10,10 +11,18 @@ def _extract_tickers(text: str) -> list[str]:
     return list(set(TICKER_PATTERN.findall(text)))
 
 def create_reddit_client() -> praw.Reddit:
+    client_id = os.environ.get("REDDIT_CLIENT_ID")
+    client_secret = os.environ.get("REDDIT_CLIENT_SECRET")
+    user_agent = os.environ.get("REDDIT_USER_AGENT", "factor-risk-dashboard:v1.0")
+    if not client_id or not client_secret:
+        raise ValueError(
+            "Set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET environment variables. "
+            "Get credentials at https://www.reddit.com/prefs/apps"
+        )
     return praw.Reddit(
-        client_id="YOUR_CLIENT_ID",
-        client_secret="YOUR_CLIENT_SECRET",
-        user_agent="factor-risk-dashboard:v1.0 (by /u/YOUR_USERNAME)",
+        client_id=client_id,
+        client_secret=client_secret,
+        user_agent=user_agent,
     )
 
 def scrape_subreddit(reddit, subreddit_name, db_path=SENTIMENT_DB_PATH, limit=REDDIT_POST_LIMIT) -> int:
