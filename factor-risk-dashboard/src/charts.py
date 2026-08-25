@@ -175,8 +175,7 @@ def multi_cumulative_return_chart(
     fig.update_layout(
         title="Cumulative Returns — Portfolio Comparison (rebased to 100)",
         yaxis_title="Value",
-        **LAYOUT_DEFAULTS,
-        height=450,
+        **{**LAYOUT_DEFAULTS, "height": 450},
     )
     return fig
 
@@ -195,8 +194,7 @@ def multi_drawdown_chart(
         title="Drawdown Comparison",
         yaxis_title="Drawdown",
         yaxis_tickformat=".1%",
-        **LAYOUT_DEFAULTS,
-        height=400,
+        **{**LAYOUT_DEFAULTS, "height": 400},
     )
     return fig
 
@@ -243,8 +241,7 @@ def rolling_sentiment_chart(
         title=f"Portfolio Return vs Rolling Sentiment Factor ({window}-day)",
         yaxis=dict(title="Cumulative Return", side="left"),
         yaxis2=dict(title="Avg SENT Factor Return", side="right", overlaying="y"),
-        **LAYOUT_DEFAULTS,
-        height=420,
+        **{**LAYOUT_DEFAULTS, "height": 420},
     )
     return fig
 
