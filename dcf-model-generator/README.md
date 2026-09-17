@@ -2,7 +2,7 @@
 
 An automated discounted cash flow (DCF) model generator that builds a full equity valuation for any publicly traded US stock. Enter a ticker and get a complete analysis with projected financials, WACC calculation, sensitivity tables, SEC filing sentiment analysis, and a downloadable Excel report.
 
-**[Live Dashboard](https://dcf-model-generator.streamlit.app)**
+**[Live Dashboard](https://dcf-generator.streamlit.app)**
 
 ![Dashboard Screenshot](https://img.shields.io/badge/python-3.10+-blue) ![Streamlit](https://img.shields.io/badge/streamlit-1.30+-red)
 
