@@ -29,8 +29,9 @@ except ImportError:
 def _get_config(key: str, default: str = "") -> str:
     """Read from st.secrets (Streamlit Cloud) falling back to env vars (local)."""
     try:
-        return st.secrets["snowflake"][key]
-    except (KeyError, FileNotFoundError):
+        val = st.secrets["snowflake"][key]
+        return val
+    except Exception:
         return os.environ.get(key, default)
 
 # ---------------------------------------------------------------------------
@@ -58,7 +59,12 @@ def get_snowflake_connection():
       - Streamlit Cloud: reads PEM key content from st.secrets["snowflake"]["private_key"]
     """
     try:
+        has_secrets = "snowflake" in st.secrets if hasattr(st, "secrets") else False
         pem_text = _get_config("private_key").strip()
+        if not has_secrets:
+            st.warning("No [snowflake] section found in Streamlit secrets.")
+        if not pem_text:
+            st.warning("private_key secret is empty — falling back to key file.")
         if pem_text and "PRIVATE KEY" in pem_text:
             pem_bytes = pem_text.encode("utf-8")
         else:
