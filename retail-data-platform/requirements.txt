@@ -1,15 +1,12 @@
-# Pinned for reproducibility. PySpark 3.5.x is the newest line that officially
-# supports Java 11 (Corretto 11 is what this project runs on -- the machine's
-# default JDK 26 is not supported by any Spark release).
-pyspark==3.5.3
-confluent-kafka==2.5.3
-
-# python.org macOS builds ship without wired-up root certificates; ingestion/
-# fetch_weather.py needs a CA bundle to reach the Open-Meteo API over HTTPS.
-certifi
-
-# Phase 4 warehouse load: Postgres -> Snowflake sync and stage/COPY INTO.
-# dbt is deliberately NOT here -- it gets its own venv (dbt/requirements-dbt.txt)
-# because dbt-core's dependency pins and pyspark's do not have to agree.
-psycopg2-binary
+# Dashboard (Streamlit Cloud deploys from this file)
+streamlit
+plotly
+pandas
+cryptography
 snowflake-connector-python
+
+# Full project deps (not needed for dashboard, but part of the platform)
+# pyspark==3.5.3
+# confluent-kafka==2.5.3
+# certifi
+# psycopg2-binary

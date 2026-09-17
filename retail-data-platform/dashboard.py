@@ -20,12 +20,18 @@ from cryptography.hazmat.primitives import serialization
 
 import snowflake.connector
 
-from warehouse.common import load_dotenv
-load_dotenv()
+try:
+    from warehouse.common import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
-# Default key path if not set in .env
-if not os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH"):
-    os.environ["SNOWFLAKE_PRIVATE_KEY_PATH"] = str(pathlib.Path.home() / "snowflake_key.p8")
+def _get_config(key: str, default: str = "") -> str:
+    """Read from st.secrets (Streamlit Cloud) falling back to env vars (local)."""
+    try:
+        return st.secrets["snowflake"][key]
+    except (KeyError, FileNotFoundError):
+        return os.environ.get(key, default)
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -45,28 +51,39 @@ SCHEMA_STAGING = "DBT_DEV_STAGING"
 
 @st.cache_resource
 def get_snowflake_connection():
-    """Return a cached Snowflake connection using key-pair auth."""
-    key_path = os.environ.get(
-        "SNOWFLAKE_PRIVATE_KEY_PATH",
-        str(pathlib.Path.home() / "snowflake_key.p8"),
-    )
+    """Return a cached Snowflake connection using key-pair auth.
+
+    Supports two modes:
+      - Local: reads PEM key from a file (SNOWFLAKE_PRIVATE_KEY_PATH env var)
+      - Streamlit Cloud: reads PEM key content from st.secrets["snowflake"]["private_key"]
+    """
     try:
-        with open(key_path, "rb") as f:
-            p_key = serialization.load_pem_private_key(
-                f.read(), password=None, backend=default_backend()
+        pem_text = _get_config("private_key")
+        if pem_text and pem_text.startswith("-----"):
+            pem_bytes = pem_text.encode("utf-8")
+        else:
+            key_path = os.environ.get(
+                "SNOWFLAKE_PRIVATE_KEY_PATH",
+                str(pathlib.Path.home() / "snowflake_key.p8"),
             )
+            with open(key_path, "rb") as f:
+                pem_bytes = f.read()
+
+        p_key = serialization.load_pem_private_key(
+            pem_bytes, password=None, backend=default_backend()
+        )
         pkb = p_key.private_bytes(
             encoding=serialization.Encoding.DER,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         )
         conn = snowflake.connector.connect(
-            account=os.environ.get("SNOWFLAKE_ACCOUNT", ""),
-            user=os.environ.get("SNOWFLAKE_USER", ""),
+            account=_get_config("SNOWFLAKE_ACCOUNT"),
+            user=_get_config("SNOWFLAKE_USER"),
             private_key=pkb,
-            role=os.environ.get("SNOWFLAKE_ROLE", ""),
-            warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", ""),
-            database=os.environ.get("SNOWFLAKE_DATABASE", ""),
+            role=_get_config("SNOWFLAKE_ROLE"),
+            warehouse=_get_config("SNOWFLAKE_WAREHOUSE"),
+            database=_get_config("SNOWFLAKE_DATABASE"),
         )
         return conn
     except Exception as exc:
