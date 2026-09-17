@@ -58,8 +58,8 @@ def get_snowflake_connection():
       - Streamlit Cloud: reads PEM key content from st.secrets["snowflake"]["private_key"]
     """
     try:
-        pem_text = _get_config("private_key")
-        if pem_text and pem_text.startswith("-----"):
+        pem_text = _get_config("private_key").strip()
+        if pem_text and "PRIVATE KEY" in pem_text:
             pem_bytes = pem_text.encode("utf-8")
         else:
             key_path = os.environ.get(
