@@ -196,13 +196,13 @@ def render_sensitivity_heatmap(df, title, x_label, y_label, current_price):
     for row in z:
         row_colors = []
         for val in row:
-            ratio = (val - current_price) / current_price if current_price else 0
+            ratio = float((val - current_price) / current_price) if current_price else 0.0
             if ratio >= 0:
                 t = min(ratio / 0.5, 1.0)
-                c = [int(white[i] + (green[i] - white[i]) * t) for i in range(3)]
+                c = [round(white[i] + (green[i] - white[i]) * t) for i in range(3)]
             else:
                 t = min(abs(ratio) / 0.5, 1.0)
-                c = [int(white[i] + (red[i] - white[i]) * t) for i in range(3)]
+                c = [round(white[i] + (red[i] - white[i]) * t) for i in range(3)]
             row_colors.append(f"rgb({c[0]},{c[1]},{c[2]})")
         colors.append(row_colors)
 
