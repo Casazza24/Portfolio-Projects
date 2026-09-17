@@ -1,0 +1,29 @@
+# Template. Copy to ~/.dbt/profiles.yml (or keep it here and export
+# DBT_PROFILES_DIR=<this dir>) once a Snowflake account exists.
+#
+# No credential is ever written literally, even in the copy: every value comes
+# from the environment, so the file itself stays safe to commit and the secrets
+# live in one place (.env, gitignored). See .env.example.
+
+retail_platform:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE') }}"
+      schema: "{{ env_var('SNOWFLAKE_SCHEMA', 'DBT_DEV') }}"
+
+      # 4 threads against an XS warehouse: the staging layer is a wide fan of
+      # independent views, so parallelism helps, but an XS warehouse is a
+      # single cluster -- pushing past this queues rather than speeds up.
+      threads: 4
+
+      # Snowflake's default is 4h. A portfolio project left mid-run on a
+      # trial account should not be able to burn credits for four hours.
+      query_tag: dbt_retail_platform
+      client_session_keep_alive: false

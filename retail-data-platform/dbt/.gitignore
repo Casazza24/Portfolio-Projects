@@ -1,0 +1,7 @@
+.venv/
+target/
+dbt_packages/
+logs/
+.env
+# The real profile, if it is kept alongside the template rather than in ~/.dbt.
+profiles.yml

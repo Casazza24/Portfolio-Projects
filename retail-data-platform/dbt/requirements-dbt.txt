@@ -1,0 +1,13 @@
+# dbt gets its own venv (dbt/.venv), separate from the project root's.
+# dbt-core pins click, jinja2 and protobuf tightly; pyspark 3.5 has its own
+# opinions about protobuf. Neither has to win if they never share a venv.
+#
+#   python3 -m venv dbt/.venv
+#   dbt/.venv/bin/pip install -r dbt/requirements-dbt.txt
+#
+# Pinned to the 1.x line deliberately: `pip install dbt-core` currently
+# resolves to a 2.0.0 alpha whose build step downloads a platform wheel at
+# install time, which fails on a machine without a wired-up CA bundle and is
+# not something a portfolio project should be running on.
+dbt-core~=1.10.0
+dbt-snowflake~=1.10.0

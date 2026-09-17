@@ -1,0 +1,23 @@
+# data
+data/
+*.csv
+*.parquet
+
+# env
+.env
+.venv/
+__pycache__/
+*.pyc
+
+# spark
+spark/checkpoints/
+spark-warehouse/
+derby.log
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# os
+.DS_Store

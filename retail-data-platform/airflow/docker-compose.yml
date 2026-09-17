@@ -1,0 +1,112 @@
+# Airflow, deliberately in its own compose file. The root docker-compose.yml
+# runs the live Postgres holding the Olist source and the Redpanda broker
+# holding the event topic; those are the pipeline's *data*, and a `docker
+# compose down` aimed at Airflow must not be able to take them with it.
+#
+# Airflow's metadata database is a second Postgres instance for the same
+# reason, one level down: a DAG run that goes wrong can corrupt Airflow's own
+# state, and it should not be able to reach the source data while doing it.
+# They also have completely different lifecycles -- the metadata DB is
+# disposable and rebuilt by `airflow db migrate`, the Olist one took a load
+# script and 1.5M rows to fill.
+#
+# ponytail: LocalExecutor, not Celery/Kubernetes. LocalExecutor forks task
+# processes from the scheduler, which is exactly right when the tasks
+# themselves are thin HTTP calls to the host runner and the real work happens
+# elsewhere. Celery would add Redis plus a worker fleet to gain distribution
+# this pipeline has no use for; the point at which it earns its place is when
+# tasks stop being I/O waits and start needing their own CPU.
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.10.5-python3.12
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    # Serialised DAGs are re-read from the metadata DB on this interval; the
+    # default 30s makes editing the DAG feel broken.
+    AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "10"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+    # Read by the DAG. Must match whatever the host runner was started with.
+    HOST_RUNNER_URL: http://host.docker.internal:8171
+    HOST_RUNNER_TOKEN: ${HOST_RUNNER_TOKEN:-local-dev}
+  volumes:
+    # DAGs and logs only. The project itself is deliberately *not* mounted --
+    # nothing in this container ever executes project code, it only asks the
+    # host runner to.
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+  extra_hosts:
+    # Docker Desktop provides host.docker.internal already; this makes the same
+    # name resolve on plain Linux, where it does not exist by default.
+    - "host.docker.internal:host-gateway"
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    airflow-postgres:
+      condition: service_healthy
+
+services:
+  airflow-postgres:
+    image: postgres:16
+    container_name: retail_platform_airflow_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    # No published port. Nothing outside this compose project has any business
+    # reaching Airflow's metadata DB, and 5432 on the host is already the Olist
+    # instance -- publishing here would make it ambiguous which one a stray
+    # `psql -h localhost` hit.
+    volumes:
+      - airflow_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Runs once and exits. Splitting migration out of the long-running services
+  # means the scheduler and webserver never race to migrate the same database
+  # on a cold start.
+  airflow-init:
+    <<: *airflow-common
+    container_name: retail_platform_airflow_init
+    restart: "no"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create --username admin --password admin \
+          --firstname admin --lastname admin --role Admin --email admin@example.com \
+          || true
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: retail_platform_airflow_scheduler
+    restart: unless-stopped
+    command: scheduler
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: retail_platform_airflow_webserver
+    restart: unless-stopped
+    command: webserver
+    ports:
+      # 8080 on the host is the Redpanda Console from the root compose file.
+      - "8081:8080"
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  airflow_pgdata:

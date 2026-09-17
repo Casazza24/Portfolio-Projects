@@ -1,0 +1,44 @@
+name: retail_platform
+version: 1.0.0
+config-version: 2
+
+profile: retail_platform
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+target-path: target
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # dim_date is generated, not loaded, so its bounds are a project decision
+  # rather than a property of any source table. The span covers RetailRocket
+  # (May-Sep 2015) and Olist (Sep 2016 - Oct 2018) with room either side, so a
+  # re-pull that extends a source by a few months does not silently produce
+  # fact rows with an unresolvable date key.
+  date_spine_start: "2015-01-01"
+  date_spine_end: "2019-12-31"
+
+  # Baselines measured in Phase 3 (docs/data_quality.md). Held here rather than
+  # inline in the tests so the numbers a test asserts against are visible
+  # without opening the test, and so re-baselining after a deliberate upstream
+  # change is a one-line diff.
+  unknown_item_rate_min: 0.07   # measured 9.27%
+  unknown_item_rate_max: 0.12
+  orphan_category_max: 132      # measured exactly 132
+
+models:
+  retail_platform:
+    staging:
+      +materialized: view
+      +schema: staging
+    marts:
+      # Tables, not views: every mart is read by Power BI, which issues many
+      # small interactive queries. Paying the transform cost once per dbt run
+      # beats paying it on every slicer click. Volumes here (2.7M event rows
+      # being the largest) rebuild in seconds, so incremental models would add
+      # state to manage for no meaningful runtime saving -- that changes at
+      # roughly two orders of magnitude more data.
+      +materialized: table
+      +schema: marts

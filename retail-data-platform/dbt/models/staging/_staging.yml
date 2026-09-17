@@ -1,0 +1,207 @@
+version: 2
+
+# Staging is renaming, typing and light cleanup only -- one model per source
+# table, no joins, no business logic, no filtering. Tests here are the ones
+# that assert the source's own shape (keys are keys, enums are the enums we
+# think they are). Anything that only becomes true after modeling is tested in
+# the marts.
+
+models:
+  - name: stg_olist__customers
+    description: >
+      Olist customers, one row per customer_id -- i.e. per order, not per
+      person. `customer_unique_id` is the person.
+    columns:
+      - name: customer_id
+        description: Per-order customer key. What orders reference.
+        tests: [not_null, unique]
+      - name: customer_unique_id
+        description: Stable person key. Repeats across a person's orders.
+        tests: [not_null]
+      - name: customer_state
+        description: Two-letter Brazilian state code. Joins to the weather dimension.
+        tests: [not_null]
+
+  - name: stg_olist__sellers
+    description: Marketplace sellers, one row per seller_id.
+    columns:
+      - name: seller_id
+        tests: [not_null, unique]
+
+  - name: stg_olist__products
+    description: >
+      Product catalogue. The source's misspelled `lenght` columns are
+      corrected here; the category is Portuguese and is null for ~600 products.
+    columns:
+      - name: product_id
+        tests: [not_null, unique]
+
+  - name: stg_olist__orders
+    description: Order headers with their lifecycle timestamps.
+    columns:
+      - name: order_id
+        tests: [not_null, unique]
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                  to: ref('stg_olist__customers')
+                  field: customer_id
+      - name: order_status
+        description: >
+          Lifecycle state. Pinned by accepted_values because a new status
+          appearing upstream changes what "delivered" excludes, and every
+          revenue figure downstream depends on that.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                  values:
+                    - delivered
+                    - shipped
+                    - canceled
+                    - unavailable
+                    - invoiced
+                    - processing
+                    - created
+                    - approved
+      - name: ordered_at
+        description: When the customer placed the order. The event date for revenue.
+        tests: [not_null]
+
+  - name: stg_olist__order_items
+    description: "Order lines. Grain: (order_id, order_item_id)."
+    columns:
+      - name: order_line_key
+        description: order_id + '-' + order_item_id. Unique at line grain.
+        tests: [not_null, unique]
+      - name: order_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                  to: ref('stg_olist__orders')
+                  field: order_id
+      - name: product_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                  to: ref('stg_olist__products')
+                  field: product_id
+      - name: seller_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                  to: ref('stg_olist__sellers')
+                  field: seller_id
+      - name: item_price
+        tests: [not_null]
+      - name: freight_value
+        tests: [not_null]
+
+  - name: stg_olist__order_payments
+    description: "Payments. Grain: (order_id, payment_sequential)."
+    columns:
+      - name: order_payment_key
+        tests: [not_null, unique]
+      - name: order_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                  to: ref('stg_olist__orders')
+                  field: order_id
+      - name: payment_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                  values: [credit_card, boleto, voucher, debit_card, not_defined]
+      - name: payment_value
+        tests: [not_null]
+
+  - name: stg_olist__order_reviews
+    description: >
+      Post-delivery reviews. Neither review_id nor order_id is unique here --
+      that is the source's shape, and it is why fct_orders picks one review
+      per order explicitly rather than joining this in as-is.
+    columns:
+      - name: order_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                  to: ref('stg_olist__orders')
+                  field: order_id
+      - name: review_score
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                  values: [1, 2, 3, 4, 5]
+                  quote: false
+
+  - name: stg_olist__product_categories
+    description: Portuguese to English category names. Incomplete by design of the source.
+    columns:
+      - name: product_category_name
+        tests: [not_null, unique]
+
+  - name: stg_olist__geolocation
+    description: >
+      Zip-prefix coordinates. Not consumed downstream -- present so that the
+      origin of dim_weather's per-state coordinates is visible in the lineage
+      graph rather than appearing from outside the project.
+    columns:
+      - name: zip_code_prefix
+        tests: [not_null]
+
+  - name: stg_retailrocket__events
+    description: >
+      Cleaned clickstream events from the Phase 3 Spark layer. Item-level
+      attributes that Spark denormalised onto the event are dropped here; they
+      belong to dim_items.
+    columns:
+      - name: event_id
+        tests: [not_null, unique]
+      - name: event_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                  values: [view, addtocart, transaction]
+      - name: event_at
+        tests: [not_null]
+      - name: item_id
+        description: >
+          Real RetailRocket item id. Always populated; does not resolve to
+          dim_items for the ~9.3% of events with no item metadata, which is
+          what fct_events.item_key exists to handle.
+        tests: [not_null]
+      - name: has_item_metadata
+        tests: [not_null]
+
+  - name: stg_retailrocket__items
+    description: >
+      Current-state item dimension, including the synthetic item_id = -1
+      unknown member. Never filtered.
+    columns:
+      - name: item_id
+        tests: [not_null, unique]
+
+  - name: stg_open_meteo__weather
+    description: "Daily weather per Brazilian state. Grain: (state, weather_date)."
+    columns:
+      - name: state
+        tests: [not_null]
+      - name: weather_date
+        tests: [not_null]
+      - name: temp_mean_c
+        description: >
+          The Phase 3 pull returned no nulls across all 20,898 rows. Tested
+          not_null so that a future re-pull hitting an API gap is caught here
+          rather than showing up as a hole in a dashboard line.
+        tests: [not_null]

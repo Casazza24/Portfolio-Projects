@@ -1,0 +1,187 @@
+version: 2
+
+# Three source systems, not one "raw" bucket. They land in the same Snowflake
+# schema, but they have different owners, different failure modes and different
+# load cadences -- and `dbt source freshness` is configured per source. Naming
+# them separately is what makes "the event feed is stale" a different sentence
+# from "the Postgres sync is stale".
+#
+# `identifier:` is spelled out on every table even where it matches the name.
+# The loaders in ingestion/ own the physical names; if one of them changes,
+# this file is the single place that has to follow, and nothing downstream
+# moves.
+
+sources:
+  - name: olist
+    description: >
+      Olist Brazilian e-commerce OLTP tables, synced from the local Postgres
+      instance (schema `olist`) into Snowflake as-is. Column names and types
+      mirror the Kaggle CSVs 1:1 -- including the misspelled `lenght` columns,
+      which are corrected in staging rather than in the load.
+    database: "{{ env_var('SNOWFLAKE_DATABASE', 'RETAIL_PLATFORM') }}"
+    schema: "{{ env_var('SNOWFLAKE_RAW_SCHEMA', 'RAW') }}"
+    tables:
+      - name: customers
+        identifier: customers
+        description: >
+          One row per customer *per order*. `customer_id` is not a person --
+          Olist mints a new one for every order. `customer_unique_id` is the
+          stable person key. Getting this backwards silently makes every
+          repeat-purchase metric zero.
+        columns:
+          - name: customer_id
+            tests: [not_null, unique]
+          - name: customer_unique_id
+            tests: [not_null]
+
+      - name: sellers
+        identifier: sellers
+        description: One row per marketplace seller.
+        columns:
+          - name: seller_id
+            tests: [not_null, unique]
+
+      - name: products
+        identifier: products
+        description: >
+          One row per product. `product_category_name` is Portuguese and is
+          null for a small number of products; the English translation lives in
+          a separate table that does not cover every category.
+        columns:
+          - name: product_id
+            tests: [not_null, unique]
+
+      - name: orders
+        identifier: orders
+        description: >
+          One row per order (the header). Carries the lifecycle timestamps;
+          the later ones are null for orders that never reached that stage,
+          which is real state, not missing data.
+        columns:
+          - name: order_id
+            tests: [not_null, unique]
+          - name: customer_id
+            tests:
+              - not_null
+              - relationships:
+                  arguments:
+                      to: source('olist', 'customers')
+                      field: customer_id
+
+      - name: order_items
+        identifier: order_items
+        description: >
+          One row per line on an order. `price` and `freight_value` are per
+          line, so this is the only grain at which order revenue is additive.
+        columns:
+          - name: order_id
+            tests: [not_null]
+          - name: order_item_id
+            tests: [not_null]
+          - name: product_id
+            tests: [not_null]
+          - name: seller_id
+            tests: [not_null]
+
+      - name: order_payments
+        identifier: order_payments
+        description: >
+          One row per payment instrument used on an order. An order split
+          across a voucher and a card has two rows, so payment_value must never
+          be joined onto the line grain without aggregating first.
+        columns:
+          - name: order_id
+            tests: [not_null]
+          - name: payment_sequential
+            tests: [not_null]
+
+      - name: order_reviews
+        identifier: order_reviews
+        description: >
+          Post-delivery review survey. NOT unique on order_id -- a small number
+          of orders carry more than one review, which is the fan-out hazard
+          that `assert_fct_orders_line_count_matches_source` exists to catch.
+        columns:
+          - name: order_id
+            tests: [not_null]
+          - name: review_score
+            tests:
+              - accepted_values:
+                  arguments:
+                      values: [1, 2, 3, 4, 5]
+                      quote: false
+
+      - name: geolocation
+        identifier: geolocation
+        description: >
+          Zip-prefix to lat/lng lookup. Contains mis-geocoded points outside
+          Brazil. Consumed by ingestion/fetch_weather.py to derive state
+          centroids; not currently modeled downstream, declared here so the
+          weather dimension's provenance is visible in the lineage graph.
+
+      - name: product_category_name_translation
+        identifier: product_category_name_translation
+        description: >
+          Portuguese to English category names. Does not cover every category
+          present in `products` -- staging falls back to the Portuguese name
+          rather than nulling the category out.
+        columns:
+          - name: product_category_name
+            tests: [not_null, unique]
+
+  - name: retailrocket
+    description: >
+      Clickstream events and item metadata, produced by the Phase 3 PySpark
+      cleaning layer as Parquet and copied into Snowflake. Already deduped,
+      validated and enriched -- rejects went to a quarantine dataset, so
+      everything here passed validation. See docs/data_quality.md.
+    database: "{{ env_var('SNOWFLAKE_DATABASE', 'RETAIL_PLATFORM') }}"
+    schema: "{{ env_var('SNOWFLAKE_RAW_SCHEMA', 'RAW') }}"
+    tables:
+      - name: events
+        identifier: events
+        description: >
+          One row per cleaned event. 2,742,263 rows for the full replay.
+        loaded_at_field: ingested_at
+        freshness:
+          # Sized against the replay, not against a live stream: the source
+          # dataset ends in Sep 2015 and is loaded in bulk, so freshness here
+          # measures "when did the pipeline last run", not "how live is the
+          # data". Generous thresholds because a portfolio project is not run
+          # nightly; tight enough that a silently broken load is still caught.
+          warn_after: {count: 24, period: hour}
+          error_after: {count: 7, period: day}
+        columns:
+          - name: event_id
+            tests: [not_null, unique]
+
+      - name: dim_items
+        identifier: dim_items
+        description: >
+          Current-state item/category dimension, flattened from RetailRocket's
+          EAV change-log. Includes a synthetic `item_id = -1` unknown-member
+          row written by spark/build_item_metadata.py; do not filter it out.
+        columns:
+          - name: item_id
+            tests: [not_null, unique]
+
+  - name: open_meteo
+    description: >
+      Daily historical weather per Brazilian state, pulled from Open-Meteo's
+      archive API by ingestion/fetch_weather.py. The external-API ingestion
+      step of the project.
+    database: "{{ env_var('SNOWFLAKE_DATABASE', 'RETAIL_PLATFORM') }}"
+    schema: "{{ env_var('SNOWFLAKE_RAW_SCHEMA', 'RAW') }}"
+    tables:
+      - name: dim_weather
+        identifier: dim_weather
+        description: >
+          Grain: one row per (state, date). 20,898 rows -- 27 states x 774 days
+          covering the Olist order window. One representative coordinate per
+          state (median of that state's Olist geolocation rows), which is an
+          approximation for large, climatically mixed states.
+        columns:
+          - name: state
+            tests: [not_null]
+          - name: weather_date
+            tests: [not_null]
