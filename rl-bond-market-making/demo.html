@@ -10160,12 +10160,12 @@ Drag any panel to rotate its view interactively.
 <h3 id="Section-3-Summary">Section 3 Summary<a class="anchor-link" href="#Section-3-Summary">¶</a></h3><p><strong>Hypothesis confirmed:</strong> Linear function approximation is insufficient for the multi-bond market-making value function.</p>
 <p><strong>Key findings:</strong></p>
 <ol>
-<li>The neural network critic outperforms <strong>both</strong> linear-in-features critics by roughly 2× (NN ≈109 vs linear ≈54 and quadratic ≈51 at ρ=0.7)</li>
-<li>The NN's advantage over the plain linear critic <strong>widens as correlation increases</strong> — exactly as predicted, since higher correlation creates stronger nonlinear interactions (see the Performance vs Correlation panel)</li>
-<li>Adding hand-crafted quadratic features does <strong>not</strong> close the gap: once training is stabilized, the quadratic-feature critic performs no better than the plain linear critic. Fixed polynomial features are not enough — the NN's edge comes from <em>learned</em> representations, not from any single pre-specified feature basis</li>
+<li>The neural network critic outperforms <strong>both</strong> linear-in-features critics by a wide margin (NN ≈106 vs linear ≈66 and quadratic ≈48 at ρ=0.7 — a ~60% improvement over the best linear model, and its critic loss is an order of magnitude lower)</li>
+<li>The NN's advantage over the plain linear critic is <strong>large and consistent at every correlation level</strong> (roughly 68–70 vs 37–43 across ρ = 0 to 0.9 in the Performance vs Correlation panel). The gap does not shrink at ρ=0 because the inventory penalty is already quadratic in $\mathbf{q}$ — a bowl a linear critic cannot represent — and correlation adds cross-terms on top of that curvature</li>
+<li>Adding hand-crafted quadratic features does <strong>not</strong> close the gap: the quadratic-feature critic performs no better than the plain linear critic (worse in this run). Fixed polynomial features are not enough — the NN's edge comes from <em>learned</em> representations, not from any single pre-specified feature basis</li>
 <li>This demonstrates why deep RL is necessary for high-dimensional financial control problems</li>
 </ol>
-<p><strong>Connection to CSCI 3202:</strong> This is precisely the function approximation question from the course — when is a linear model (as in linear regression / linear TD) sufficient vs. when you need the representational capacity of neural networks. The answer depends on the <strong>structure of the value function</strong>, which in this case has irreducible nonlinearities due to correlation-induced cross-terms.</p>
+<p><strong>Connection to CSCI 3202:</strong> This is precisely the function approximation question from the course — when is a linear model (as in linear regression / linear TD) sufficient vs. when you need the representational capacity of neural networks. The answer depends on the <strong>structure of the value function</strong>, which in this case has irreducible nonlinearities from the quadratic inventory penalty and its correlation-induced cross-terms.</p>
 </div>
 </div>
 </div>
