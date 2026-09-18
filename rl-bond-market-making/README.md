@@ -16,20 +16,20 @@ A market maker is someone who always offers to buy and sell a security. They pos
 
 There's a well-known math solution to this problem for a single bond (the Avellaneda-Stoikov model). You can solve it exactly using a technique called finite differences, which basically works backward through time on a grid of possible states to find the best action at each point.
 
-The problem is that this grid approach falls apart fast. For one bond with an inventory cap of 5, you only have 11 possible inventory states. For five bonds, that jumps to 161,051 states. For ten bonds, you'd need roughly 25 billion states — totally impossible to compute.
+The problem is that this grid approach falls apart fast. For one bond with an inventory cap of 5, you only have 11 possible inventory states. For five bonds, that jumps to 161,051 states. For ten bonds, you'd need roughly 25 billion states — totally impossible to compute. For 500 bonds the grid would have more states than there are atoms in the observable universe.
 
 This project trains an RL agent (specifically, an actor-critic with neural networks) to learn the same pricing strategy. The key findings:
 
 1. **For a single bond, the RL agent matches the known-correct solution** — it learns to widen its buy price when it's already holding a lot, and tighten its sell price to offload inventory, just like the math says it should.
 
-2. **The RL agent scales to five bonds where the exact solution can't go.** Training time for the RL agent grows roughly linearly with the number of bonds, while the grid method's time grows exponentially.
+2. **The RL agent scales to 500 bonds where the exact solution can't go.** One small policy network is shared across every bond (it quotes one bond at a time from that bond's own features), so the network stays the same size no matter how many bonds there are. Training 500 correlated bonds takes about three minutes, and training time grows roughly linearly with the number of bonds while the grid method's time grows exponentially.
 
-3. **Neural networks outperform simpler models when bonds are correlated.** When bond prices move together, the interactions between inventory positions create a value landscape that a simple linear model can't capture. A neural network handles this naturally, roughly doubling the performance of a linear model.
+3. **Neural networks outperform simpler models when bonds are correlated.** When bond prices move together, the interactions between inventory positions create a value landscape that a simple linear model can't capture. A neural network handles this naturally, beating the best linear model by about 60% and holding that edge at every correlation level tested.
 
 ## How It Works
 
 - **Section 1** validates the RL agent against the known solution for one bond — making sure the learning actually works before scaling up.
-- **Section 2** shows what happens when you try to scale the grid method to multiple bonds (it breaks) and that RL handles it fine.
+- **Section 2** shows what happens when you try to scale the grid method to multiple bonds (it breaks) and that RL with a shared policy network handles it fine, all the way up to 500 bonds.
 - **Section 3** compares three different ways of estimating how good a given state is (linear, quadratic features, and neural network) and shows why you need a neural network when bonds are correlated.
 
 ## Tech Stack
