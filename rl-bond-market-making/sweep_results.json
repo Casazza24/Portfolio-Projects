@@ -1,0 +1,184 @@
+[
+  {
+    "param_name": "gamma",
+    "param_value": 0.001,
+    "mean_bid_spread": 0.883588969707489,
+    "mean_ask_spread": 0.9999528527259827,
+    "mean_total_spread": 1.8835418224334717
+  },
+  {
+    "param_name": "gamma",
+    "param_value": 0.005,
+    "mean_bid_spread": 0.8656662106513977,
+    "mean_ask_spread": 0.8559125065803528,
+    "mean_total_spread": 1.7215787172317505
+  },
+  {
+    "param_name": "gamma",
+    "param_value": 0.01,
+    "mean_bid_spread": 0.7063053250312805,
+    "mean_ask_spread": 0.9045221209526062,
+    "mean_total_spread": 1.6108274459838867
+  },
+  {
+    "param_name": "gamma",
+    "param_value": 0.05,
+    "mean_bid_spread": 0.9295814633369446,
+    "mean_ask_spread": 0.6017362475395203,
+    "mean_total_spread": 1.5313177108764648
+  },
+  {
+    "param_name": "gamma",
+    "param_value": 0.1,
+    "mean_bid_spread": 0.6588903665542603,
+    "mean_ask_spread": 0.6959943771362305,
+    "mean_total_spread": 1.3548847436904907
+  },
+  {
+    "param_name": "gamma",
+    "param_value": 0.5,
+    "mean_bid_spread": 0.7572100162506104,
+    "mean_ask_spread": 0.6735634207725525,
+    "mean_total_spread": 1.4307734966278076
+  },
+  {
+    "param_name": "gamma",
+    "param_value": 1.0,
+    "mean_bid_spread": 0.8073646426200867,
+    "mean_ask_spread": 0.8505997657775879,
+    "mean_total_spread": 1.6579644680023193
+  },
+  {
+    "param_name": "gamma",
+    "param_value": 5.0,
+    "mean_bid_spread": 0.7916185259819031,
+    "mean_ask_spread": 0.6821028590202332,
+    "mean_total_spread": 1.4737213850021362
+  },
+  {
+    "param_name": "gamma",
+    "param_value": 10.0,
+    "mean_bid_spread": 0.06812746077775955,
+    "mean_ask_spread": 0.1649935394525528,
+    "mean_total_spread": 0.23312100768089294
+  },
+  {
+    "param_name": "sigma",
+    "param_value": 0.1,
+    "mean_bid_spread": 0.7396483421325684,
+    "mean_ask_spread": 0.8226811289787292,
+    "mean_total_spread": 1.5623295307159424
+  },
+  {
+    "param_name": "sigma",
+    "param_value": 0.25,
+    "mean_bid_spread": 0.7795734405517578,
+    "mean_ask_spread": 0.8629308342933655,
+    "mean_total_spread": 1.6425042152404785
+  },
+  {
+    "param_name": "sigma",
+    "param_value": 0.5,
+    "mean_bid_spread": 0.7619962692260742,
+    "mean_ask_spread": 0.9323049187660217,
+    "mean_total_spread": 1.6943011283874512
+  },
+  {
+    "param_name": "sigma",
+    "param_value": 1.0,
+    "mean_bid_spread": 0.7927553057670593,
+    "mean_ask_spread": 0.9235567450523376,
+    "mean_total_spread": 1.716312050819397
+  },
+  {
+    "param_name": "sigma",
+    "param_value": 2.0,
+    "mean_bid_spread": 0.9635805487632751,
+    "mean_ask_spread": 0.6203218102455139,
+    "mean_total_spread": 1.583902359008789
+  },
+  {
+    "param_name": "sigma",
+    "param_value": 3.0,
+    "mean_bid_spread": 0.6291112303733826,
+    "mean_ask_spread": 0.9253222346305847,
+    "mean_total_spread": 1.5544334650039673
+  },
+  {
+    "param_name": "sigma",
+    "param_value": 5.0,
+    "mean_bid_spread": 0.7173237204551697,
+    "mean_ask_spread": 0.8231816291809082,
+    "mean_total_spread": 1.5405054092407227
+  },
+  {
+    "param_name": "sigma",
+    "param_value": 8.0,
+    "mean_bid_spread": 0.899125874042511,
+    "mean_ask_spread": 0.8920185565948486,
+    "mean_total_spread": 1.7911443710327148
+  },
+  {
+    "param_name": "sigma",
+    "param_value": 10.0,
+    "mean_bid_spread": 0.7428004145622253,
+    "mean_ask_spread": 0.9151843190193176,
+    "mean_total_spread": 1.657984733581543
+  },
+  {
+    "param_name": "k",
+    "param_value": 0.5,
+    "mean_bid_spread": 1.625388741493225,
+    "mean_ask_spread": 2.044271230697632,
+    "mean_total_spread": 3.6696600914001465
+  },
+  {
+    "param_name": "k",
+    "param_value": 0.75,
+    "mean_bid_spread": 1.078765869140625,
+    "mean_ask_spread": 1.0975401401519775,
+    "mean_total_spread": 2.1763060092926025
+  },
+  {
+    "param_name": "k",
+    "param_value": 1.0,
+    "mean_bid_spread": 1.2946043014526367,
+    "mean_ask_spread": 1.0660226345062256,
+    "mean_total_spread": 2.3606269359588623
+  },
+  {
+    "param_name": "k",
+    "param_value": 1.25,
+    "mean_bid_spread": 0.759606122970581,
+    "mean_ask_spread": 0.7468995451927185,
+    "mean_total_spread": 1.5065057277679443
+  },
+  {
+    "param_name": "k",
+    "param_value": 1.5,
+    "mean_bid_spread": 0.795295000076294,
+    "mean_ask_spread": 0.8129578232765198,
+    "mean_total_spread": 1.608252763748169
+  },
+  {
+    "param_name": "k",
+    "param_value": 2.0,
+    "mean_bid_spread": 0.6929841041564941,
+    "mean_ask_spread": 0.8348865509033203,
+    "mean_total_spread": 1.5278706550598145
+  },
+  {
+    "param_name": "k",
+    "param_value": 2.5,
+    "mean_bid_spread": 0.6465185284614563,
+    "mean_ask_spread": 0.6739121079444885,
+    "mean_total_spread": 1.3204306364059448
+  },
+  {
+    "param_name": "k",
+    "param_value": 3.0,
+    "mean_bid_spread": 0.718407928943634,
+    "mean_ask_spread": 0.6768257021903992,
+    "mean_total_spread": 1.3952336311340332
+  }
+]
