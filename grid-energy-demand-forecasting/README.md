@@ -9,6 +9,15 @@ A time series forecasting project that uses spectral analysis (FFT) to engineer 
 - **Three dominant cycles confirmed.** FFT on approximately 145,000 hourly observations reveals clear peaks at 24 hours (daily, strongest), 168 hours (weekly), and approximately 8,760 hours (annual).
 - **Spectral features have practical advantages over lags.** They require no lookback window, are model-agnostic, and work at the first timestamp of a new series, which lag features cannot do.
 
+
+## Results
+
+| Model | MAPE | Notes |
+|---|---|---|
+| GradientBoosting (all features) | **0.97%** | Lags + calendar + spectral |
+| GradientBoosting (no spectral) | ~1.0% | Lags + calendar only |
+| Seasonal Naive Baseline | ~4-5% | Previous week same hour |
+
 ## Methodology
 
 1. **Data pull**: PJM East hourly consumption data (2002-2018) from Kaggle, cleaned and deduplicated

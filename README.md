@@ -21,4 +21,4 @@ Across these projects: Python (pandas, numpy, scikit-learn, XGBoost, matplotlib,
 
 ## Live Portfolio
 
-The projects above are showcased at: https://casazza-personal-website-ten-peach-66.vercel.app/
+The projects above are showcased at: https://matthew-casazza.dev
