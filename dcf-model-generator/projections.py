@@ -6,11 +6,11 @@ from config import revenue_growth_rates as build_growth_path
 
 
 def _ratio(numerator, denominator):
-    """Mean of numerator/denominator across years, skipping zero denominators."""
-    mask = denominator != 0
-    if not mask.any():
+    """Mean of numerator/denominator across years, skipping zero denominators and NaNs."""
+    valid = (denominator != 0) & np.isfinite(numerator) & np.isfinite(denominator)
+    if not valid.any():
         return 0.0
-    return float(np.mean(numerator[mask] / denominator[mask]))
+    return float(np.nanmean(numerator[valid] / denominator[valid]))
 
 
 def derive_assumptions(hist_df, config_assumptions):
@@ -37,7 +37,7 @@ def derive_assumptions(hist_df, config_assumptions):
     projection_years = config_assumptions["projection_years"]
     terminal_growth_rate = min(config_assumptions["terminal_growth_rate"], 0.04)
 
-    nwc = cur_assets - cash - (cur_liab - cur_debt)
+    nwc = np.nan_to_num(cur_assets, 0) - np.nan_to_num(cash, 0) - (np.nan_to_num(cur_liab, 0) - np.nan_to_num(cur_debt, 0))
 
     hist_gm = _ratio(gp, rev)
     gross_margin_start = hist_gm if hist_gm > 0 else config_assumptions.get("gross_margin_start", 0.45)

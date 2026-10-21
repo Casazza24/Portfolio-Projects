@@ -12,6 +12,8 @@ from dcf_engine import calculate_wacc, run_dcf
 from sensitivity import build_sensitivity_tables
 from edgar import analyze_filing, empty_filing, print_report
 from excel_output import generate_excel
+from validation import validate_financials
+from xbrl_fetcher import fetch_xbrl_facts, extract_annual_financials, validate_against_yfinance
 
 
 def smart_format(x):
@@ -50,7 +52,40 @@ def run_analysis(symbol):
     projected = project_financials(base_revenue, derived)
     full_df = pd.concat([hist_df, projected], axis=1)
 
-    wacc = calculate_wacc(hist_df, info, income_stmt, derived["tax_rate"])
+    # Financial data validation
+    fin_warnings = validate_financials(hist_df)
+    if fin_warnings:
+        print("\n=== DATA VALIDATION WARNINGS ===")
+        for w in fin_warnings:
+            print(f"  ⚠ {w}")
+
+    # XBRL cross-check
+    try:
+        xbrl_raw = fetch_xbrl_facts(symbol)
+        xbrl_data = extract_annual_financials(xbrl_raw)
+        xbrl_report = validate_against_yfinance(symbol, xbrl_data, hist_df)
+        mismatches = [r for r in xbrl_report if r['status'] == 'MISMATCH']
+        if mismatches:
+            print(f"\n=== XBRL CROSS-CHECK: {len(mismatches)} discrepancies ===")
+            for m in mismatches:
+                print(f"  {m['field']} ({m['year']}): XBRL={m['xbrl_val']:,.0f} vs YF={m['yf_val']:,.0f} ({m['pct_diff']:.1%} diff)")
+        else:
+            print("\n  ✓ XBRL cross-check passed (all fields within 5%)")
+    except Exception as e:
+        print(f"\n  XBRL cross-check skipped: {e}")
+
+    wacc_result = calculate_wacc(hist_df, info, income_stmt, derived["tax_rate"])
+    wacc = wacc_result['wacc']
+
+    print("\n=== WACC DECOMPOSITION ===")
+    print(f"  Beta:                  {wacc_result['beta']:.2f}")
+    print(f"  Cost of Equity:        {wacc_result['cost_of_equity']:.2%}")
+    print(f"  Cost of Debt:          {wacc_result['cost_of_debt']:.2%}")
+    print(f"  Equity Weight:         {wacc_result['equity_weight']:.1%}")
+    print(f"  Debt Weight:           {wacc_result['debt_weight']:.1%}")
+    print(f"  Interest Expense:      {wacc_result['interest_expense_source']}")
+    print(f"  WACC:                  {wacc:.2%}")
+
     projection_years = derived["projection_years"]
     projected_ufcfs = [projected.loc["UFCF", f"Year {i}"] for i in range(1, projection_years + 1)]
 

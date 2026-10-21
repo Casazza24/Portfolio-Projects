@@ -1,5 +1,7 @@
 """Streamlit dashboard for the DCF model generator."""
 
+import math
+
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -12,24 +14,51 @@ from dcf_engine import calculate_wacc, run_dcf
 from sensitivity import build_sensitivity_tables
 from edgar import analyze_filing, empty_filing
 from excel_output import generate_excel_bytes
+from validation import validate_financials
+from xbrl_fetcher import fetch_xbrl_facts, extract_annual_financials, validate_against_yfinance
 
 st.set_page_config(page_title="DCF Model Generator", page_icon="📊", layout="wide")
 
 
+@st.cache_resource(ttl=300)
+def fetch_data(symbol):
+    """Fetch raw financial data (cached separately from model run)."""
+    return fetch_financial_data(symbol)
+
+
 @st.cache_data(ttl=300)
-def run_model(symbol):
-    """Run the full DCF pipeline and return all results."""
-    data = fetch_financial_data(symbol)
+def fetch_xbrl(symbol):
+    """Fetch XBRL data from SEC EDGAR (cached)."""
+    try:
+        raw = fetch_xbrl_facts(symbol)
+        return extract_annual_financials(raw)
+    except Exception:
+        return None
+
+
+def run_model(symbol, overrides=None):
+    """Run the full DCF pipeline with optional assumption overrides."""
+    data = fetch_data(symbol)
     info = data["info"]
     hist_df = data["hist_df"]
     income_stmt = data["income_stmt"]
 
     derived = derive_assumptions(hist_df, assumptions)
+
+    if overrides:
+        derived.update(overrides)
+
     base_revenue = hist_df.loc["Total Revenue"].iloc[0]
     projected = project_financials(base_revenue, derived)
     full_df = pd.concat([hist_df, projected], axis=1)
 
-    wacc = calculate_wacc(hist_df, info, income_stmt, derived["tax_rate"])
+    wacc_result = calculate_wacc(
+        hist_df, info, income_stmt, derived["tax_rate"],
+        risk_free_rate=derived.get("risk_free_rate", 0.04),
+        equity_risk_premium=derived.get("equity_risk_premium", 0.045),
+    )
+    wacc = wacc_result['wacc']
+
     projection_years = derived["projection_years"]
     projected_ufcfs = [projected.loc["UFCF", f"Year {i}"] for i in range(1, projection_years + 1)]
 
@@ -50,12 +79,16 @@ def run_model(symbol):
     except Exception:
         filing_analysis = None
 
+    fin_warnings = validate_financials(hist_df)
+
     return {
         "info": info,
         "hist_df": hist_df,
+        "income_stmt": income_stmt,
         "derived": derived,
         "full_df": full_df,
         "wacc": wacc,
+        "wacc_result": wacc_result,
         "dcf_results": dcf_results,
         "current_price": current_price,
         "implied_price": dcf_results["implied_price"],
@@ -67,7 +100,76 @@ def run_model(symbol):
         "sens2_df": sens2_df,
         "filing_analysis": filing_analysis,
         "warning": data.get("warning"),
+        "fin_warnings": fin_warnings,
     }
+
+
+def render_sidebar_overrides(derived):
+    """Render assumption override controls in the sidebar. Return overrides dict."""
+    overrides = {}
+
+    with st.sidebar:
+        st.header("Assumption Overrides")
+        st.caption("Adjust any input below to re-run the model.")
+
+        st.subheader("WACC Inputs")
+        overrides["risk_free_rate"] = st.number_input(
+            "Risk-Free Rate", value=derived.get("risk_free_rate", 0.04),
+            min_value=0.0, max_value=0.15, step=0.005, format="%.3f",
+        )
+        overrides["equity_risk_premium"] = st.number_input(
+            "Equity Risk Premium", value=derived.get("equity_risk_premium", 0.045),
+            min_value=0.0, max_value=0.15, step=0.005, format="%.3f",
+        )
+
+        st.subheader("Growth")
+        overrides["terminal_growth_rate"] = st.number_input(
+            "Terminal Growth Rate", value=derived["terminal_growth_rate"],
+            min_value=0.0, max_value=0.05, step=0.005, format="%.3f",
+        )
+        yr1_growth = derived["revenue_growth_rates"][0] if derived["revenue_growth_rates"] else 0.05
+        new_yr1 = st.number_input(
+            "Year 1 Revenue Growth", value=yr1_growth,
+            min_value=-0.50, max_value=1.0, step=0.01, format="%.3f",
+        )
+        if new_yr1 != yr1_growth:
+            n = len(derived["revenue_growth_rates"])
+            tgr = overrides["terminal_growth_rate"]
+            overrides["revenue_growth_rates"] = [
+                new_yr1 + (tgr - new_yr1) * i / max(n - 1, 1) for i in range(n)
+            ]
+
+        st.subheader("Margins & Costs")
+        overrides["gross_margin"] = st.number_input(
+            "Gross Margin", value=derived["gross_margin"],
+            min_value=0.0, max_value=1.0, step=0.01, format="%.3f",
+        )
+        if overrides["gross_margin"] != derived["gross_margin"]:
+            overrides["gross_margins"] = [overrides["gross_margin"]] * len(derived["gross_margins"])
+
+        overrides["sga_pct_revenue"] = st.number_input(
+            "SG&A % Revenue", value=derived["sga_pct_revenue"],
+            min_value=0.0, max_value=1.0, step=0.01, format="%.3f",
+        )
+        overrides["da_pct_revenue"] = st.number_input(
+            "D&A % Revenue", value=derived["da_pct_revenue"],
+            min_value=0.0, max_value=0.50, step=0.005, format="%.3f",
+        )
+        overrides["capex_pct_revenue"] = st.number_input(
+            "CapEx % Revenue", value=derived["capex_pct_revenue"],
+            min_value=0.0, max_value=0.50, step=0.005, format="%.3f",
+        )
+        overrides["tax_rate"] = st.number_input(
+            "Tax Rate", value=derived["tax_rate"],
+            min_value=0.0, max_value=0.50, step=0.01, format="%.3f",
+        )
+        overrides["nwc_pct_revenue"] = st.number_input(
+            "NWC % Revenue", value=derived["nwc_pct_revenue"],
+            min_value=-0.50, max_value=0.50, step=0.005, format="%.3f",
+        )
+
+    changed = {k: v for k, v in overrides.items() if k in derived and v != derived.get(k)}
+    return changed if changed else None
 
 
 def render_summary(results):
@@ -89,6 +191,29 @@ def render_summary(results):
     col2.metric("Implied Price", f"${implied:,.2f}")
     col3.metric("Upside / Downside", f"{upside:+.1%}")
     col4.metric("WACC", f"{results['wacc']:.2%}")
+
+
+def render_wacc_decomposition(wacc_result):
+    """Render the WACC decomposition panel."""
+    st.subheader("WACC Decomposition")
+    col1, col2, col3 = st.columns(3)
+    col1.metric(
+        "Cost of Equity", f"{wacc_result['cost_of_equity']:.2%}",
+        help=f"CAPM: {wacc_result['risk_free_rate']:.1%} + {wacc_result['beta']:.2f} × {wacc_result['equity_risk_premium']:.1%}",
+    )
+    col2.metric(
+        "Cost of Debt (after-tax)",
+        f"{wacc_result['cost_of_debt'] * (1 - wacc_result['tax_rate']):.2%}",
+    )
+    col3.metric("WACC", f"{wacc_result['wacc']:.2%}")
+
+    st.caption(
+        f"Capital structure: {wacc_result['equity_weight']:.1%} equity, "
+        f"{wacc_result['debt_weight']:.1%} debt  ·  "
+        f"Beta: {wacc_result['beta']:.2f}"
+    )
+    if 'estimated' in wacc_result['interest_expense_source']:
+        st.warning("Interest expense not found in filings. Using 3.5% of total debt as estimate.")
 
 
 def render_assumptions(derived):
@@ -196,7 +321,10 @@ def render_sensitivity_heatmap(df, title, x_label, y_label, current_price):
     for row in z:
         row_colors = []
         for val in row:
-            ratio = float((val - current_price) / current_price) if current_price else 0.0
+            if math.isnan(val) or not current_price:
+                row_colors.append("rgb(128,128,128)")
+                continue
+            ratio = float((val - current_price) / current_price)
             if ratio >= 0:
                 t = min(ratio / 0.5, 1.0)
                 c = [round(white[i] + (green[i] - white[i]) * t) for i in range(3)]
@@ -242,6 +370,50 @@ def render_sensitivity(results):
         render_sensitivity_heatmap(results["sens2_df"], "Revenue Growth vs Gross Margin", "GM", "Rev Growth Y1", current)
 
     st.caption("Green = at or above current price, Red = below current price")
+
+
+def render_validation(results, xbrl_data):
+    """Render data validation section."""
+    fin_warnings = results.get("fin_warnings", [])
+    hist_df = results["hist_df"]
+
+    if fin_warnings:
+        st.subheader("Data Validation Warnings")
+        for w in fin_warnings:
+            st.warning(w)
+
+    with st.expander("Data Source Validation (SEC XBRL vs Yahoo Finance)"):
+        if xbrl_data is None:
+            st.info("XBRL data unavailable for this ticker.")
+            return
+
+        report = validate_against_yfinance("", xbrl_data, hist_df)
+        if not report:
+            st.info("No overlapping fields to compare.")
+            return
+
+        report_df = pd.DataFrame(report)
+        display_df = report_df[report_df['status'].isin(['MATCH', 'MISMATCH'])].copy()
+
+        if display_df.empty:
+            st.info("No comparable data points found between XBRL and Yahoo Finance.")
+            return
+
+        display_df['xbrl_val'] = display_df['xbrl_val'].map(lambda x: f"{x:,.0f}" if x else "N/A")
+        display_df['yf_val'] = display_df['yf_val'].map(lambda x: f"{x:,.0f}" if x else "N/A")
+        display_df['pct_diff'] = display_df['pct_diff'].map(lambda x: f"{x:.1%}" if x is not None else "N/A")
+
+        def highlight_status(row):
+            if row['status'] == 'MISMATCH':
+                return ['background-color: #ffc7ce'] * len(row)
+            return ['background-color: #c6efce'] * len(row)
+
+        styled = display_df.style.apply(highlight_status, axis=1)
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        n_match = len(display_df[display_df['status'] == 'MATCH'])
+        n_mismatch = len(display_df[display_df['status'] == 'MISMATCH'])
+        st.caption(f"{n_match} matches, {n_mismatch} mismatches (>5% difference)")
 
 
 def render_earnings(filing):
@@ -304,10 +476,18 @@ def main():
 
         with st.spinner(f"Running DCF analysis for {ticker}..."):
             try:
-                results = run_model(ticker)
+                base_results = run_model(ticker)
             except ValueError as e:
                 st.error(str(e))
                 return
+
+        overrides = render_sidebar_overrides(base_results["derived"])
+
+        if overrides:
+            with st.spinner("Recalculating with overrides..."):
+                results = run_model(ticker, overrides)
+        else:
+            results = base_results
 
         if results.get("warning"):
             st.warning(results["warning"])
@@ -338,16 +518,24 @@ def main():
 
         st.divider()
 
-        tab1, tab2, tab3, tab4 = st.tabs(["Financials", "DCF Valuation", "Sensitivity", "Earnings Analysis"])
+        xbrl_data = fetch_xbrl(ticker)
+
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "Financials", "DCF Valuation", "Sensitivity",
+            "Data Validation", "Earnings Analysis",
+        ])
 
         with tab1:
             render_assumptions(results["derived"])
             render_financials(results["full_df"])
         with tab2:
+            render_wacc_decomposition(results["wacc_result"])
             render_dcf_bridge(results)
         with tab3:
             render_sensitivity(results)
         with tab4:
+            render_validation(results, xbrl_data)
+        with tab5:
             render_earnings(filing)
 
 
