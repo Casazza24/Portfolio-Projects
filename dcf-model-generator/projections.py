@@ -50,7 +50,9 @@ def derive_assumptions(hist_df, config_assumptions):
     capex = row("Capital Expenditure")
     eff_tax = row("Effective Tax Rate")
     cur_assets = row("Current Assets")
-    cash = row("Cash And Cash Equivalents")
+    # Fall back to plain cash for older hist_df objects without the combined row
+    cash = row("Cash And Short Term Investments") if "Cash And Short Term Investments" in hist_df.index \
+        else row("Cash And Cash Equivalents")
     cur_liab = row("Current Liabilities")
     cur_debt = row("Current Debt")
 
@@ -64,7 +66,8 @@ def derive_assumptions(hist_df, config_assumptions):
     hold_years = config_assumptions["hold_years"]
     terminal_growth_rate = min(config_assumptions["terminal_growth_rate"], 0.04)
 
-    # Operating working capital: excludes cash and short-term debt. Missing
+    # Operating working capital: excludes cash, short-term investments and
+    # short-term debt (financing items, valued in the equity bridge). Missing
     # balance-sheet lines propagate as NaN and are skipped by _ratio.
     nwc = cur_assets - cash - (cur_liab - cur_debt)
 
@@ -158,6 +161,12 @@ def project_financials(base_revenue, assumptions):
     negative (outflow) and Change In Working Capital is the cash impact
     (negative when working capital grows), so UFCF = NOPAT + D&A + CapEx + dNWC
     for both historical and projected columns.
+
+    UFCF is the cash flow to all capital providers before any financing
+    flows: taxes are on operating income (the interest tax shield lives in
+    WACC), and stock-based compensation is NOT added back, so it is treated
+    as a real operating cost. It is therefore lower than the conventional
+    "cash from operations minus CapEx" for most large-cap companies.
     """
     n = assumptions["projection_years"]
     growth_rates = assumptions["revenue_growth_rates"]

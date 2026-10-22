@@ -35,6 +35,7 @@ def make_statements(capex_sign=-1, **overrides):
         "Depreciation And Amortization": 50.0,
         "Capital Expenditure": capex_sign * 80.0,
         "Change In Working Capital": -20.0,
+        "Operating Cash Flow": 300.0,
     }
     bal = {
         "Current Assets": 500.0, "Current Liabilities": 300.0, "Current Debt": 50.0,
@@ -64,12 +65,12 @@ def flat_config(**extra):
 def test_historical_fcf_subtracts_negative_capex():
     hist_df, _ = make_hist()
     # tax rate 68/340 = 20%; 350*0.8 + 50 - 80 - 20 = 230
-    assert hist_df.loc["Free Cash Flow", YEARS[0]] == pytest.approx(230.0)
+    assert hist_df.loc["UFCF", YEARS[0]] == pytest.approx(230.0)
 
 
 def test_historical_fcf_same_for_positive_capex_input():
     hist_df, _ = make_hist(capex_sign=+1)
-    assert hist_df.loc["Free Cash Flow", YEARS[0]] == pytest.approx(230.0)
+    assert hist_df.loc["UFCF", YEARS[0]] == pytest.approx(230.0)
     assert hist_df.loc["Capital Expenditure", YEARS[0]] == -80.0
 
 
@@ -209,9 +210,9 @@ def test_project_financials_rejects_short_schedules():
 # --- 6. WACC uses configured inputs ----------------------------------------
 
 def _wacc_inputs(beta=1.2):
-    hist_df = pd.DataFrame({"2024": [1e9, 500e6]}, index=["Total Revenue", "Total Debt"])
+    capital = {"total_debt": 500e6, "avg_debt_for_interest": 500e6, "market_cap": 1.5e9}
     income_stmt = pd.DataFrame({"2024": [25e6]}, index=["Interest Expense"])
-    return hist_df, {"beta": beta, "marketCap": 1.5e9}, income_stmt
+    return capital, {"beta": beta, "marketCap": 1.5e9}, income_stmt
 
 
 def test_wacc_requires_explicit_rates():

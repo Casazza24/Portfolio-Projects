@@ -12,7 +12,7 @@ from dcf_engine import calculate_wacc, run_dcf
 from sensitivity import build_sensitivity_tables
 from edgar import analyze_filing, empty_filing, print_report
 from excel_output import generate_excel
-from validation import validate_financials, xbrl_issues, is_reliable, input_provenance
+from validation import validate_financials, xbrl_issues, is_reliable, input_provenance, valuation_sanity_checks
 from xbrl_fetcher import (
     fetch_xbrl_facts, extract_annual_financials, validate_against_yfinance, summarize_xbrl_report,
 )
@@ -30,6 +30,7 @@ def run_analysis(symbol):
     info = data["info"]
     hist_df = data["hist_df"]
     income_stmt = data["income_stmt"]
+    capital = data["capital"]
 
     if data["warning"]:
         print(f"\n  ⚠ {data['warning']}")
@@ -69,7 +70,7 @@ def run_analysis(symbol):
     print(f"  {xbrl_summary['reason']}")
 
     wacc_result = calculate_wacc(
-        hist_df, info, income_stmt, derived["tax_rate"],
+        capital, info, income_stmt, derived["tax_rate"],
         risk_free_rate=derived["risk_free_rate"],
         equity_risk_premium=derived["equity_risk_premium"],
     )
@@ -84,24 +85,13 @@ def run_analysis(symbol):
     print(f"  Interest Expense:      {wacc_result['interest_expense_source']}")
     print(f"  WACC:                  {wacc:.2%}")
 
-    issues = (validate_financials(hist_df, data["missing"], derived, wacc_result)
-              + xbrl_issues(xbrl_report, xbrl_summary))
-    if issues:
-        print("\n=== DATA VALIDATION ===")
-        for sev in ("critical", "warning", "info"):
-            for i in issues:
-                if i["severity"] == sev:
-                    print(f"  [{sev.upper()}] {i['message']}")
-    print("\n=== INPUT PROVENANCE (latest year) ===")
-    print(input_provenance(hist_df, data["missing"], xbrl_report).to_string(index=False))
-    reliable = is_reliable(issues)
-
     projection_years = derived["projection_years"]
     projected_ufcfs = [projected.loc["UFCF", f"Year {i}"] for i in range(1, projection_years + 1)]
 
-    total_debt = info.get("totalDebt", 0)
-    total_cash = info.get("totalCash", 0)
-    shares = info.get("sharesOutstanding")
+    # Same dated snapshot as the WACC weights (see build_capital_structure)
+    total_debt = capital["total_debt"]
+    total_cash = capital["cash"]
+    shares = capital["shares_diluted"]
     current_price = info.get("currentPrice")
 
     dcf_results = run_dcf(wacc, derived["terminal_growth_rate"], projected_ufcfs, total_debt, total_cash, shares)
@@ -114,12 +104,25 @@ def run_analysis(symbol):
     print(f"  Terminal Value: ${dcf_results['terminal_value']:,.0f}")
     print(f"  PV of Terminal Value: ${dcf_results['pv_terminal']:,.0f}")
     print(f"  Enterprise Value: ${dcf_results['enterprise_value']:,.0f}")
-    print(f"  Less Debt: ${total_debt:,.0f}")
-    print(f"  Plus Cash: ${total_cash:,.0f}")
+    print(f"  Less Debt: ${total_debt:,.0f}  ({capital['debt_source']}, as of {capital['as_of'].date()})")
+    print(f"  Plus Cash: ${total_cash:,.0f}  ({capital['cash_source']})")
     print(f"  Equity Value: ${dcf_results['equity_value']:,.0f}")
+    print(f"  Diluted Shares: {shares:,.0f}  ({capital['share_source']})")
     print(f"  Implied Price: ${implied_price:.2f}")
     print(f"  Current Price: ${current_price:.2f}")
     print(f"  Upside/Downside: {((implied_price / current_price) - 1):.1%}")
+
+    sanity_issues, _ = valuation_sanity_checks(dcf_results, derived, projected, capital, info.get("country"))
+    issues = (validate_financials(hist_df, data["missing"], derived, wacc_result)
+              + xbrl_issues(xbrl_report, xbrl_summary) + sanity_issues)
+    print("\n=== DATA VALIDATION & SANITY CHECKS ===")
+    for sev in ("critical", "warning", "info"):
+        for i in issues:
+            if i["severity"] == sev:
+                print(f"  [{sev.upper()}] {i['message']}")
+    print("\n=== INPUT PROVENANCE (latest year) ===")
+    print(input_provenance(hist_df, data["missing"], xbrl_report).to_string(index=False))
+    reliable = is_reliable(issues)
     if not reliable:
         print("\n  ✗ UNRELIABLE: critical validation issues above. Treat this price as diagnostic only.")
 

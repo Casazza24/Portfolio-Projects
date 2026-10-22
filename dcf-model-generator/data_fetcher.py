@@ -46,6 +46,95 @@ def unlevered_fcf(operating_income, tax_rate, da, capex, change_wc):
     return operating_income * (1 - tax_rate) + da - abs(capex) + change_wc
 
 
+def conventional_fcf(operating_cash_flow, capex):
+    """Cash flow from operations minus CapEx (levered, after interest)."""
+    return operating_cash_flow - abs(capex)
+
+
+def _first_available(statement, *labels):
+    for label in labels:
+        val = _safe_loc(statement, label)
+        if not pd.isna(val):
+            return val
+    return np.nan
+
+
+def build_capital_structure(quarterly_bs, quarterly_is, annual_bs, info, as_of_today=None):
+    """One dated snapshot of debt, cash and shares for WACC and the equity bridge.
+
+    Debt is balance-sheet Total Debt (borrowings plus finance leases).
+    Operating lease liabilities are excluded because operating lease cost is
+    already deducted in operating income, so counting them as debt too would
+    double count. Cash includes short-term investments. Both come from the
+    most recent balance sheet, the closest available date to the market cap
+    and share price. Book debt stands in for the market value of debt.
+
+    Shares = current basic shares + latest-quarter dilution (diluted minus
+    basic weighted-average shares), a treasury-stock-method approximation.
+    """
+    sheet = quarterly_bs if quarterly_bs is not None and not quarterly_bs.empty else annual_bs
+    source = "quarterly balance sheet" if sheet is quarterly_bs else "annual balance sheet"
+    as_of = None
+    for col in sheet.columns:
+        if not pd.isna(_first_available(
+                sheet[col], "Total Debt", "Total Assets", "Long Term Debt And Capital Lease Obligation",
+                "Cash Cash Equivalents And Short Term Investments", "Cash And Cash Equivalents")):
+            as_of = col
+            break
+    if as_of is None:
+        raise ValueError("No balance sheet available for the capital structure snapshot.")
+    bal = sheet[as_of]
+
+    total_debt = _safe_loc(bal, "Total Debt")
+    debt_source = f"Total Debt, {source}"
+    if pd.isna(total_debt):
+        parts = [_safe_loc(bal, "Current Debt And Capital Lease Obligation"),
+                 _safe_loc(bal, "Long Term Debt And Capital Lease Obligation")]
+        if all(pd.isna(x) for x in parts):
+            total_debt, debt_source = 0.0, "not reported; assumed 0"
+        else:
+            total_debt = float(np.nansum(parts))
+            debt_source = f"current + long-term debt, {source}"
+
+    cash = _first_available(bal, "Cash Cash Equivalents And Short Term Investments", "Cash And Cash Equivalents")
+    cash_source = f"cash + short-term investments, {source}"
+    if pd.isna(cash):
+        cash, cash_source = 0.0, "not reported; assumed 0"
+
+    # Cost of debt pairs a full-year interest flow with average debt over the
+    # same fiscal year, using the same Total Debt definition.
+    annual_debt = annual_bs.loc["Total Debt"].dropna() if "Total Debt" in annual_bs.index else pd.Series(dtype=float)
+    avg_debt = float(annual_debt.iloc[:2].mean()) if len(annual_debt) else total_debt
+
+    basic = info.get("sharesOutstanding")
+    if not basic:
+        raise ValueError("sharesOutstanding is missing")
+    dilution, share_source = 0.0, "basic only (diluted share data unavailable)"
+    if quarterly_is is not None and not quarterly_is.empty and {
+        "Diluted Average Shares", "Basic Average Shares"} <= set(quarterly_is.index):
+        both = quarterly_is.loc[["Diluted Average Shares", "Basic Average Shares"]].dropna(axis=1)
+        if not both.empty:
+            col = both.columns[0]
+            dilution = max(0.0, float(both.loc["Diluted Average Shares", col] - both.loc["Basic Average Shares", col]))
+            share_source = f"basic + dilution from quarter ending {pd.Timestamp(col).date()}"
+
+    today = pd.Timestamp(as_of_today) if as_of_today is not None else pd.Timestamp.today()
+    return {
+        "as_of": pd.Timestamp(as_of),
+        "age_days": (today.normalize() - pd.Timestamp(as_of).normalize()).days,
+        "total_debt": float(total_debt),
+        "debt_source": debt_source,
+        "avg_debt_for_interest": avg_debt,
+        "cash": float(cash),
+        "cash_source": cash_source,
+        "shares_basic": float(basic),
+        "dilutive_shares": dilution,
+        "shares_diluted": float(basic) + dilution,
+        "share_source": share_source,
+        "market_cap": info.get("marketCap"),
+    }
+
+
 def build_historical(income_stmt, balance_sheet, cashflow, fallback_tax_rate=0.21):
     """Structure raw statements into hist_df plus a dict of missing fields."""
     historical = {}
@@ -96,11 +185,19 @@ def build_historical(income_stmt, balance_sheet, cashflow, fallback_tax_rate=0.2
             "Current Debt": _safe_loc(bal, "Current Debt"),
             "Total Debt": _safe_loc(bal, "Total Debt"),
             "Cash And Cash Equivalents": _safe_loc(bal, "Cash And Cash Equivalents"),
+            # Non-operating liquid assets, excluded from operating working capital
+            "Cash And Short Term Investments": _first_available(
+                bal, "Cash Cash Equivalents And Short Term Investments", "Cash And Cash Equivalents",
+            ),
             "Gross Margin": gross_profit / total_revenue if total_revenue else np.nan,
             # Operating income is the EBIT concept used in the projections, so
             # historical and projected margins are comparable.
             "EBIT Margin": operating_income / total_revenue if total_revenue else np.nan,
-            "Free Cash Flow": unlevered_fcf(operating_income, fcf_tax, da, capex, change_wc),
+            "UFCF": unlevered_fcf(operating_income, fcf_tax, da, capex, change_wc),
+            # Conventional (levered) FCF, shown for comparison only. It is after
+            # interest, uses cash taxes, and adds back stock-based compensation,
+            # so it is not the cash flow discounted at WACC.
+            "OCF - CapEx": conventional_fcf(_safe_loc(cf, "Operating Cash Flow"), capex),
         }
 
         for field in ZERO_IF_MISSING:
@@ -162,6 +259,9 @@ def fetch_financial_data(symbol, fallback_tax_rate=0.21):
     cashflow = ticker.cashflow.iloc[:, :4]
 
     hist_df, missing = build_historical(income_stmt, balance_sheet, cashflow, fallback_tax_rate)
+    capital = build_capital_structure(
+        ticker.quarterly_balance_sheet, ticker.quarterly_income_stmt, balance_sheet, info,
+    )
 
     return {
         "symbol": symbol,
@@ -170,5 +270,6 @@ def fetch_financial_data(symbol, fallback_tax_rate=0.21):
         "hist_df": hist_df,
         "income_stmt": income_stmt,
         "missing": missing,
+        "capital": capital,
         "warning": warning,
     }

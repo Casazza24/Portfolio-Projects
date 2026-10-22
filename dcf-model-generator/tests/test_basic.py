@@ -35,16 +35,13 @@ def test_run_dcf_no_shares():
 
 def test_calculate_wacc_returns_dict():
     """calculate_wacc should return a dict with all components."""
-    hist_df = pd.DataFrame(
-        {"2024": [1e9, 500e6]},
-        index=["Total Revenue", "Total Debt"],
-    )
+    capital = {"total_debt": 500e6, "avg_debt_for_interest": 500e6, "market_cap": 10e9}
     info = {"beta": 1.2, "marketCap": 10e9}
     income_stmt = pd.DataFrame(
         {"2024": [50e6]},
         index=["Interest Expense"],
     )
-    result = calculate_wacc(hist_df, info, income_stmt, tax_rate=0.21,
+    result = calculate_wacc(capital, info, income_stmt, tax_rate=0.21,
                             risk_free_rate=0.04, equity_risk_premium=0.045)
 
     assert isinstance(result, dict)
@@ -57,11 +54,11 @@ def test_calculate_wacc_returns_dict():
 
 def test_calculate_wacc_zero_debt():
     """With no debt, WACC should equal cost of equity."""
-    hist_df = pd.DataFrame({"2024": [1e9, 0]}, index=["Total Revenue", "Total Debt"])
+    capital = {"total_debt": 0.0, "avg_debt_for_interest": 0.0, "market_cap": 10e9}
     info = {"beta": 1.0, "marketCap": 10e9}
     income_stmt = pd.DataFrame({"2024": [0]}, index=["Interest Expense"])
 
-    result = calculate_wacc(hist_df, info, income_stmt, tax_rate=0.21,
+    result = calculate_wacc(capital, info, income_stmt, tax_rate=0.21,
                             risk_free_rate=0.04, equity_risk_premium=0.045)
     assert result['wacc'] == result['cost_of_equity']
     assert result['debt_weight'] == 0.0

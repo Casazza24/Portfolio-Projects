@@ -91,7 +91,8 @@ def validate_financials(hist_df, missing=None, derived=None, wacc_result=None):
                                      f"{y}: effective tax rate abnormal or loss year; excluded from normalized rate"))
         if "fallback" in derived.get("tax_rate_source", ""):
             issues.append(_issue(WARNING, "tax_rate_estimated", None,
-                                 f"No normal historical tax year; using fallback rate {derived['tax_rate']:.1%}"))
+                                 f"No normal historical tax year; using fallback rate {derived['tax_rate']:.1%}. "
+                                 "This ignores loss carryforwards and non-US rates; set the tax rate manually."))
         if derived.get("other_opex_pct_revenue", 0) < -0.02:
             issues.append(_issue(WARNING, "opex_reconciliation", None,
                                  "SG&A + R&D exceed (Gross Profit - Operating Income); "
@@ -128,6 +129,78 @@ def xbrl_issues(report, summary):
     else:
         issues.append(_issue(INFO, "xbrl_verified", None, f"SEC XBRL verified: {summary['reason']}"))
     return issues
+
+
+def valuation_sanity_checks(dcf_results, derived, projected, capital, country=None):
+    """Sanity checks on the finished valuation. Returns (issues, metrics).
+
+    Covers terminal value share of EV, projected vs historical operating
+    margin, terminal-year reinvestment vs growth, diluted share count, the
+    age of the capital-structure snapshot, and the tax-rate fallback.
+    """
+    issues, m = [], {}
+    ev = dcf_results["enterprise_value"]
+    g = derived["terminal_growth_rate"]
+
+    if ev <= 0:
+        issues.append(_issue(CRITICAL, "negative_ev", None, f"Enterprise value is not positive ({ev:,.0f})"))
+        m["tv_pct_ev"] = float("nan")
+    else:
+        m["tv_pct_ev"] = dcf_results["pv_terminal"] / ev
+        sev = WARNING if m["tv_pct_ev"] > 0.85 else INFO
+        issues.append(_issue(sev, "terminal_value_share", None,
+                             f"Terminal value is {m['tv_pct_ev']:.0%} of enterprise value"
+                             + (" (most of the value sits beyond the forecast window)" if sev == WARNING else "")))
+
+    last = projected.columns[-1]
+    m["op_margin_hist"] = derived.get("operating_margin_hist", float("nan"))
+    m["op_margin_terminal"] = projected.loc["EBIT Margin", last]
+    gap = m["op_margin_terminal"] - m["op_margin_hist"]
+    issues.append(_issue(WARNING if abs(gap) > 0.10 else INFO, "operating_margin", None,
+                         f"Terminal-year operating margin {m['op_margin_terminal']:.1%} vs "
+                         f"historical average {m['op_margin_hist']:.1%} ({gap:+.1%})"))
+
+    # Net reinvestment = CapEx beyond D&A plus NWC build (both sign-flipped
+    # from cash-flow convention). Sustainable growth g = reinvestment rate x
+    # RONIC, so the implied return on new capital is g / reinvestment rate.
+    nopat = projected.loc["NOPAT", last]
+    net_reinvest = (-projected.loc["Capital Expenditure", last]
+                    - projected.loc["Depreciation And Amortization", last]
+                    - projected.loc["Change In Working Capital", last])
+    m["reinvestment_rate"] = net_reinvest / nopat if nopat else float("nan")
+    if nopat <= 0:
+        issues.append(_issue(WARNING, "reinvestment", None, "Terminal-year NOPAT is not positive"))
+    elif g > 0 and m["reinvestment_rate"] <= 0:
+        issues.append(_issue(WARNING, "reinvestment", None,
+                             f"Terminal growth {g:.1%} with net reinvestment of {m['reinvestment_rate']:.1%} "
+                             "of NOPAT: growth is assumed without investment (implied RONIC unbounded)"))
+    else:
+        m["implied_ronic"] = g / m["reinvestment_rate"] if m["reinvestment_rate"] else float("nan")
+        sev = WARNING if m["implied_ronic"] > 0.50 else INFO
+        issues.append(_issue(sev, "reinvestment", None,
+                             f"Terminal reinvestment {m['reinvestment_rate']:.1%} of NOPAT implies "
+                             f"{m['implied_ronic']:.0%} return on new capital at {g:.1%} growth"))
+
+    m["dilution_pct"] = capital["dilutive_shares"] / capital["shares_basic"]
+    if "unavailable" in capital["share_source"]:
+        issues.append(_issue(WARNING, "diluted_shares", None,
+                             "Diluted share data unavailable; implied price uses basic shares"))
+    else:
+        issues.append(_issue(INFO, "diluted_shares", None,
+                             f"Diluted shares {capital['shares_diluted']:,.0f} "
+                             f"(+{m['dilution_pct']:.2%} over basic; {capital['share_source']})"))
+
+    if capital["age_days"] > 135:
+        issues.append(_issue(WARNING, "stale_balance_sheet", None,
+                             f"Debt and cash are as of {capital['as_of'].date()} "
+                             f"({capital['age_days']} days before the share price date)"))
+
+    if "fallback" in derived.get("tax_rate_source", "") and country and country != "United States":
+        issues.append(_issue(WARNING, "tax_rate_jurisdiction", None,
+                             f"Fallback tax rate {derived['tax_rate']:.1%} is the US federal statutory "
+                             f"rate; company is domiciled in {country}. Override the tax rate."))
+
+    return issues, m
 
 
 def is_reliable(issues):

@@ -16,7 +16,10 @@ assumptions = {
     "risk_free_rate": 0.04,
 
     # Used only when no historical year has a normal effective tax rate
-    # (see data_fetcher.NORMAL_TAX_RATE_BAND). US federal statutory rate.
+    # (see data_fetcher.NORMAL_TAX_RATE_BAND). This is the US federal
+    # statutory rate: it excludes state taxes, ignores loss carryforwards and
+    # is not appropriate for non-US companies. A warning is raised whenever
+    # it is used; override the tax rate for such companies.
     "fallback_tax_rate": 0.21,
 
     # Legacy flat-rate fallbacks, kept for reference / sensitivity overrides.

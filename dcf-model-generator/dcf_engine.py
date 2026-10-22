@@ -1,8 +1,13 @@
 """WACC calculation and DCF valuation engine."""
 
 
-def calculate_wacc(hist_df, info, income_stmt, tax_rate, *, risk_free_rate, equity_risk_premium):
+def calculate_wacc(capital, info, income_stmt, tax_rate, *, risk_free_rate, equity_risk_premium):
     """Calculate weighted average cost of capital.
+
+    capital is the snapshot from data_fetcher.build_capital_structure; its
+    total_debt is the same figure deducted in the equity bridge, so WACC
+    weights and the EV-to-equity bridge use one debt definition and date.
+    Cost of debt = annual interest / average debt over that fiscal year.
 
     risk_free_rate and equity_risk_premium are required so the configured or
     user-overridden values always flow through (no hidden defaults).
@@ -13,11 +18,12 @@ def calculate_wacc(hist_df, info, income_stmt, tax_rate, *, risk_free_rate, equi
     if beta is None or beta != beta:
         beta = 1.0
         beta_source = "assumed (1.0, beta unavailable)"
-    market_cap = info.get("marketCap")
+    market_cap = capital.get("market_cap") or info.get("marketCap")
     if not market_cap:
         raise ValueError("market_cap is missing or zero")
 
-    total_debt = hist_df.loc["Total Debt"].iloc[0]
+    total_debt = capital["total_debt"]
+    avg_debt = capital.get("avg_debt_for_interest") or total_debt
 
     interest_expense_source = 'reported'
     try:
@@ -27,7 +33,7 @@ def calculate_wacc(hist_df, info, income_stmt, tax_rate, *, risk_free_rate, equi
         interest_expense = None
 
     if interest_expense is None:
-        interest_expense = total_debt * 0.035
+        interest_expense = avg_debt * 0.035
         interest_expense_source = 'estimated (3.5% of debt)'
 
     cost_of_equity = risk_free_rate + beta * equity_risk_premium
@@ -50,7 +56,7 @@ def calculate_wacc(hist_df, info, income_stmt, tax_rate, *, risk_free_rate, equi
             'tax_rate': tax_rate,
         }
 
-    cost_of_debt = abs(interest_expense) / total_debt
+    cost_of_debt = abs(interest_expense) / avg_debt if avg_debt else 0.0
     total_capital = market_cap + total_debt
     equity_weight = market_cap / total_capital
     debt_weight = total_debt / total_capital
@@ -89,6 +95,9 @@ def run_dcf(wacc, terminal_growth, projected_ufcfs, total_debt, cash, shares):
     implied_price = equity_value / shares
 
     return {
+        "total_debt": total_debt,
+        "cash": cash,
+        "shares": shares,
         "pv_fcfs": pv_fcfs,
         "terminal_value": terminal_value,
         "pv_terminal": pv_terminal,

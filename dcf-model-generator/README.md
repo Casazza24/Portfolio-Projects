@@ -22,8 +22,8 @@ An automated discounted cash flow (DCF) model generator that builds a full equit
 
 ```bash
 # Clone the repo
-git clone https://github.com/Casazza24/dcf-model-generator.git
-cd dcf-model-generator
+git clone https://github.com/Casazza24/Portfolio-Projects.git
+cd Portfolio-Projects/dcf-model-generator
 
 # Create and activate a virtual environment
 python -m venv venv
@@ -85,17 +85,63 @@ dcf-model-generator/
 | Projection window | 8 years | Config |
 | Hold years (growth) | 3 years | Config |
 | Terminal growth rate | 2.5% | Config (capped at 4%) |
-| Gross margin ramp | 45% to 50% | Config |
+| Gross margin ramp | Historical average + 5pp over the window | Derived start, configurable expansion |
 | Risk-free rate | 4.0% | Config |
 | Equity risk premium | 4.5% | Config |
+| Opex (SG&A, R&D, other) | Derived | Historical % of revenue; EBIT reconciles to reported operating income |
+| Tax rate | Derived | Median of normal historical effective rates (see below) |
 | All other ratios | Derived | Historical averages |
+
+### Cash flow definitions
+
+The model discounts **unlevered free cash flow** at WACC:
+
+`UFCF = Operating income x (1 - tax rate) + D&A + CapEx + Change in NWC`
+
+CapEx and change in NWC use cash flow statement signs (negative = cash used), in historical and projected columns alike. UFCF is not the same as the conventional **cash from operations minus CapEx**, which is also shown (`OCF - CapEx` row) for comparison:
+
+| | UFCF | OCF - CapEx |
+|---|---|---|
+| Interest | Excluded (financing flow; tax shield is in WACC) | Deducted |
+| Taxes | On operating income | Actual cash taxes |
+| Stock-based compensation | Treated as a real cost (not added back) | Added back |
+| Non-operating income | Excluded | Included |
+
+For Apple FY2025 the gap is about $12.5B (UFCF $86.3B vs OCF - CapEx $98.8B), roughly equal to stock-based compensation.
+
+Operating working capital excludes cash, short-term investments, and short-term debt.
+
+### Capital structure
+
+Debt, cash, and shares come from one dated snapshot (latest quarterly balance sheet), used for both the WACC weights and the enterprise-to-equity bridge:
+
+- **Debt**: balance-sheet Total Debt (borrowings plus finance leases). Operating lease liabilities are excluded because operating lease cost is already deducted in operating income.
+- **Cash**: cash, equivalents, and short-term investments. Long-term marketable securities are *not* added, which understates equity value for cash-rich companies.
+- **Cost of debt**: latest annual interest expense / average Total Debt over the last two fiscal year ends.
+- **Shares**: current basic shares plus latest-quarter dilution (diluted minus basic weighted-average shares).
+- Book debt stands in for market value. The snapshot date is reported, and a warning appears when it is more than 135 days old.
+
+### Tax rate normalization and its limits
+
+Historical effective rates are `tax provision / pretax income`. Loss years and rates outside 0-50% are excluded, and the forecast uses the **median** of the remaining years, so a single discrete charge (e.g. Apple's FY2024 EU State Aid charge) does not drive the forecast. Known limitations:
+
+- The normalized rate is applied in perpetuity, including the terminal value. Rates held down by foreign income mix, R&D credits, or temporary incentives may not persist.
+- Effective book rates differ from cash tax rates (deferred taxes are ignored).
+- Loss carryforwards (NOLs) are not modeled. A company with accumulated losses may pay little tax for years, which a flat rate misses.
+- With only four years of data, the median can still rest on one or two observations.
+- If no year is usable, the model falls back to `fallback_tax_rate` (21%, the **US federal statutory rate only**). It excludes state taxes and is wrong for non-US companies. The model raises a warning in that case, and a stronger one when the company is domiciled outside the US. Set the tax rate manually in the dashboard for these companies.
+
+### Valuation sanity checks
+
+Each run reports terminal value as a share of enterprise value, terminal-year vs historical operating margin, terminal reinvestment rate and implied return on new capital (`g / reinvestment rate`), and the diluted share count. Growth with zero or negative net reinvestment is flagged.
 
 ## Limitations
 
 - Uses Yahoo Finance data, which may have gaps (especially for interest expense)
 - Conservative by design -- the model typically implies prices below market. The sensitivity tables show what assumptions would justify market prices.
 - EDGAR section extraction relies on pattern matching and may not work for all filing formats
-- Gross margin ramp uses config defaults rather than company-specific targets
+- Gross margin expansion (+5pp default) is a single configurable judgment, not a company-specific forecast
+- See the tax rate and capital structure notes above
 - Does not model segment-level economics or M&A scenarios
 
 ## Built With

@@ -14,7 +14,7 @@ from dcf_engine import calculate_wacc, run_dcf
 from sensitivity import build_sensitivity_tables
 from edgar import analyze_filing, empty_filing
 from excel_output import generate_excel_bytes
-from validation import validate_financials, xbrl_issues, is_reliable, input_provenance
+from validation import validate_financials, xbrl_issues, is_reliable, input_provenance, valuation_sanity_checks
 from xbrl_fetcher import (
     fetch_xbrl_facts, extract_annual_financials, validate_against_yfinance, summarize_xbrl_report,
 )
@@ -44,6 +44,7 @@ def run_model(symbol, overrides=None):
     info = data["info"]
     hist_df = data["hist_df"]
     income_stmt = data["income_stmt"]
+    capital = data["capital"]
 
     derived = apply_overrides(derive_assumptions(hist_df, assumptions), overrides)
 
@@ -52,7 +53,7 @@ def run_model(symbol, overrides=None):
     full_df = pd.concat([hist_df, projected], axis=1)
 
     wacc_result = calculate_wacc(
-        hist_df, info, income_stmt, derived["tax_rate"],
+        capital, info, income_stmt, derived["tax_rate"],
         risk_free_rate=derived["risk_free_rate"],
         equity_risk_premium=derived["equity_risk_premium"],
     )
@@ -61,9 +62,10 @@ def run_model(symbol, overrides=None):
     projection_years = derived["projection_years"]
     projected_ufcfs = [projected.loc["UFCF", f"Year {i}"] for i in range(1, projection_years + 1)]
 
-    total_debt = info.get("totalDebt", 0)
-    total_cash = info.get("totalCash", 0)
-    shares = info.get("sharesOutstanding")
+    # Same dated snapshot as the WACC weights (see build_capital_structure)
+    total_debt = capital["total_debt"]
+    total_cash = capital["cash"]
+    shares = capital["shares_diluted"]
     current_price = info.get("currentPrice")
 
     dcf_results = run_dcf(wacc, derived["terminal_growth_rate"], projected_ufcfs, total_debt, total_cash, shares)
@@ -81,8 +83,11 @@ def run_model(symbol, overrides=None):
     xbrl_data = fetch_xbrl(symbol)
     xbrl_report = validate_against_yfinance(symbol, xbrl_data, hist_df) if xbrl_data else []
     xbrl_summary = summarize_xbrl_report(xbrl_report)
+    sanity_issues, sanity_metrics = valuation_sanity_checks(
+        dcf_results, derived, projected, capital, info.get("country"),
+    )
     issues = (validate_financials(hist_df, data.get("missing"), derived, wacc_result)
-              + xbrl_issues(xbrl_report, xbrl_summary))
+              + xbrl_issues(xbrl_report, xbrl_summary) + sanity_issues)
 
     return {
         "info": info,
@@ -104,6 +109,8 @@ def run_model(symbol, overrides=None):
         "filing_analysis": filing_analysis,
         "warning": data.get("warning"),
         "issues": issues,
+        "capital": capital,
+        "sanity_metrics": sanity_metrics,
         "reliable": is_reliable(issues),
         "xbrl_report": xbrl_report,
         "xbrl_summary": xbrl_summary,
@@ -293,12 +300,17 @@ def render_dcf_bridge(results):
             "+ PV of Terminal Value": dcf["pv_terminal"] / 1e6,
             "= Enterprise Value": dcf["enterprise_value"] / 1e6,
             "- Total Debt": results["total_debt"] / 1e6,
-            "+ Cash": results["total_cash"] / 1e6,
+            "+ Cash & ST Investments": results["total_cash"] / 1e6,
             "= Equity Value": dcf["equity_value"] / 1e6,
         }
         bridge_df = pd.DataFrame({"$ Millions": bridge_data.values()}, index=bridge_data.keys())
         bridge_df["$ Millions"] = bridge_df["$ Millions"].map(lambda x: f"{x:,.0f}")
         st.dataframe(bridge_df, use_container_width=True)
+        cap = results["capital"]
+        st.caption(
+            f"Debt and cash as of {cap['as_of'].date()} (same snapshot as WACC weights). "
+            f"Diluted shares: {cap['shares_diluted']:,.0f} ({cap['share_source']})."
+        )
 
     with col2:
         st.markdown("**Discounted Cash Flows**")

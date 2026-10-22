@@ -46,7 +46,7 @@ CENTER = Alignment(horizontal="center", vertical="center")
 
 PCT_ROWS = {"Gross Margin", "EBIT Margin", "Revenue Growth"}
 BOLD_ROWS = {"Total Revenue", "Gross Profit", "EBIT", "EBITDA",
-             "Net Income", "NOPAT", "UFCF", "Free Cash Flow"}
+             "Net Income", "NOPAT", "UFCF"}
 
 
 def _millions(val):
@@ -344,9 +344,10 @@ def _write_dcf(wb, full_df, wacc, assumptions, dcf_results, current_price):
     proj_cols = [c for c in full_df.columns if not hasattr(c, "year")]
     projection_years = len(proj_cols)
     terminal_growth = assumptions["terminal_growth_rate"]
-    total_debt_val = full_df.loc["Total Debt"].dropna().iloc[0]
-    cash_val = full_df.loc["Cash And Cash Equivalents"].dropna().iloc[0]
-    shares_val = dcf_results["equity_value"] / dcf_results["implied_price"]
+    # Use the exact figures run_dcf bridged with, not historical balance-sheet rows
+    total_debt_val = dcf_results["total_debt"]
+    cash_val = dcf_results["cash"]
+    shares_val = dcf_results["shares"]
 
     ws.merge_cells("A1:E1")
     ws["A1"].value = "DCF Valuation"
@@ -485,9 +486,9 @@ def _write_dcf(wb, full_df, wacc, assumptions, dcf_results, current_price):
         ("+ PV of Terminal Value", _millions(dcf_results["pv_terminal"]), "#,##0", False),
         ("= Enterprise Value", _millions(dcf_results["enterprise_value"]), "#,##0", True),
         ("- Total Debt", _millions(total_debt_val), "#,##0", False),
-        ("+ Cash & Equivalents", _millions(cash_val), "#,##0", False),
+        ("+ Cash & ST Investments", _millions(cash_val), "#,##0", False),
         ("= Equity Value", _millions(dcf_results["equity_value"]), "#,##0", True),
-        ("Shares Outstanding (M)", shares_val / SCALE, "#,##0.0", False),
+        ("Diluted Shares (M)", shares_val / SCALE, "#,##0.0", False),
         ("Implied Share Price", dcf_results["implied_price"], "$#,##0.00", True),
         ("Current Market Price", current_price, "$#,##0.00", False),
         ("Upside / Downside", (dcf_results["implied_price"] / current_price) - 1, "0.0%", True),
