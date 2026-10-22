@@ -44,7 +44,8 @@ def test_calculate_wacc_returns_dict():
         {"2024": [50e6]},
         index=["Interest Expense"],
     )
-    result = calculate_wacc(hist_df, info, income_stmt, tax_rate=0.21)
+    result = calculate_wacc(hist_df, info, income_stmt, tax_rate=0.21,
+                            risk_free_rate=0.04, equity_risk_premium=0.045)
 
     assert isinstance(result, dict)
     assert 'wacc' in result
@@ -60,7 +61,8 @@ def test_calculate_wacc_zero_debt():
     info = {"beta": 1.0, "marketCap": 10e9}
     income_stmt = pd.DataFrame({"2024": [0]}, index=["Interest Expense"])
 
-    result = calculate_wacc(hist_df, info, income_stmt, tax_rate=0.21)
+    result = calculate_wacc(hist_df, info, income_stmt, tax_rate=0.21,
+                            risk_free_rate=0.04, equity_risk_premium=0.045)
     assert result['wacc'] == result['cost_of_equity']
     assert result['debt_weight'] == 0.0
 
@@ -80,4 +82,4 @@ def test_validate_financials_mismatch():
         "2024": [1000, 400, 700, 0, 0, 0],
     }, index=["Total Revenue", "Cost Of Revenue", "Gross Profit", "EBITDA", "EBIT", "Depreciation And Amortization"])
     warnings = validate_financials(hist_df)
-    assert any("Gross Profit mismatch" in w for w in warnings)
+    assert any("Gross Profit mismatch" in w["message"] for w in warnings)

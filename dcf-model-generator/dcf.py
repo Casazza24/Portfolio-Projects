@@ -12,8 +12,10 @@ from dcf_engine import calculate_wacc, run_dcf
 from sensitivity import build_sensitivity_tables
 from edgar import analyze_filing, empty_filing, print_report
 from excel_output import generate_excel
-from validation import validate_financials
-from xbrl_fetcher import fetch_xbrl_facts, extract_annual_financials, validate_against_yfinance
+from validation import validate_financials, xbrl_issues, is_reliable, input_provenance
+from xbrl_fetcher import (
+    fetch_xbrl_facts, extract_annual_financials, validate_against_yfinance, summarize_xbrl_report,
+)
 
 
 def smart_format(x):
@@ -24,7 +26,7 @@ def smart_format(x):
 
 def run_analysis(symbol):
     """Run the full DCF pipeline for a ticker and save an Excel workbook."""
-    data = fetch_financial_data(symbol)
+    data = fetch_financial_data(symbol, assumptions["fallback_tax_rate"])
     info = data["info"]
     hist_df = data["hist_df"]
     income_stmt = data["income_stmt"]
@@ -42,9 +44,11 @@ def run_analysis(symbol):
     print(f"  Gross Margin (hist):   {derived['gross_margin']:.1%}")
     print("  Gross Margin Ramp:     " + ", ".join(f"{m:.1%}" for m in derived["gross_margins"]))
     print(f"  SG&A % Revenue:        {derived['sga_pct_revenue']:.1%}")
+    print(f"  R&D % Revenue:         {derived['rnd_pct_revenue']:.1%}")
+    print(f"  Other Opex % Revenue:  {derived['other_opex_pct_revenue']:.1%}")
     print(f"  D&A % Revenue:         {derived['da_pct_revenue']:.1%}")
     print(f"  CapEx % Revenue:       {derived['capex_pct_revenue']:.1%}")
-    print(f"  Tax Rate:              {derived['tax_rate']:.1%}")
+    print(f"  Tax Rate (normalized): {derived['tax_rate']:.1%}  [{derived['tax_rate_source']}]")
     print(f"  NWC % Revenue (delta): {derived['nwc_pct_revenue']:.1%}")
     print(f"  Terminal Growth Rate:  {derived['terminal_growth_rate']:.1%}")
 
@@ -52,29 +56,23 @@ def run_analysis(symbol):
     projected = project_financials(base_revenue, derived)
     full_df = pd.concat([hist_df, projected], axis=1)
 
-    # Financial data validation
-    fin_warnings = validate_financials(hist_df)
-    if fin_warnings:
-        print("\n=== DATA VALIDATION WARNINGS ===")
-        for w in fin_warnings:
-            print(f"  ⚠ {w}")
-
     # XBRL cross-check
     try:
         xbrl_raw = fetch_xbrl_facts(symbol)
         xbrl_data = extract_annual_financials(xbrl_raw)
         xbrl_report = validate_against_yfinance(symbol, xbrl_data, hist_df)
-        mismatches = [r for r in xbrl_report if r['status'] == 'MISMATCH']
-        if mismatches:
-            print(f"\n=== XBRL CROSS-CHECK: {len(mismatches)} discrepancies ===")
-            for m in mismatches:
-                print(f"  {m['field']} ({m['year']}): XBRL={m['xbrl_val']:,.0f} vs YF={m['yf_val']:,.0f} ({m['pct_diff']:.1%} diff)")
-        else:
-            print("\n  ✓ XBRL cross-check passed (all fields within 5%)")
     except Exception as e:
-        print(f"\n  XBRL cross-check skipped: {e}")
+        print(f"\n  XBRL cross-check failed to run: {e}")
+        xbrl_report = []
+    xbrl_summary = summarize_xbrl_report(xbrl_report)
+    print(f"\n=== XBRL CROSS-CHECK: {xbrl_summary['status']} ===")
+    print(f"  {xbrl_summary['reason']}")
 
-    wacc_result = calculate_wacc(hist_df, info, income_stmt, derived["tax_rate"])
+    wacc_result = calculate_wacc(
+        hist_df, info, income_stmt, derived["tax_rate"],
+        risk_free_rate=derived["risk_free_rate"],
+        equity_risk_premium=derived["equity_risk_premium"],
+    )
     wacc = wacc_result['wacc']
 
     print("\n=== WACC DECOMPOSITION ===")
@@ -85,6 +83,18 @@ def run_analysis(symbol):
     print(f"  Debt Weight:           {wacc_result['debt_weight']:.1%}")
     print(f"  Interest Expense:      {wacc_result['interest_expense_source']}")
     print(f"  WACC:                  {wacc:.2%}")
+
+    issues = (validate_financials(hist_df, data["missing"], derived, wacc_result)
+              + xbrl_issues(xbrl_report, xbrl_summary))
+    if issues:
+        print("\n=== DATA VALIDATION ===")
+        for sev in ("critical", "warning", "info"):
+            for i in issues:
+                if i["severity"] == sev:
+                    print(f"  [{sev.upper()}] {i['message']}")
+    print("\n=== INPUT PROVENANCE (latest year) ===")
+    print(input_provenance(hist_df, data["missing"], xbrl_report).to_string(index=False))
+    reliable = is_reliable(issues)
 
     projection_years = derived["projection_years"]
     projected_ufcfs = [projected.loc["UFCF", f"Year {i}"] for i in range(1, projection_years + 1)]
@@ -110,6 +120,8 @@ def run_analysis(symbol):
     print(f"  Implied Price: ${implied_price:.2f}")
     print(f"  Current Price: ${current_price:.2f}")
     print(f"  Upside/Downside: {((implied_price / current_price) - 1):.1%}")
+    if not reliable:
+        print("\n  ✗ UNRELIABLE: critical validation issues above. Treat this price as diagnostic only.")
 
     sens_df, sens2_df = build_sensitivity_tables(
         projected_ufcfs, total_debt, total_cash, shares, wacc,

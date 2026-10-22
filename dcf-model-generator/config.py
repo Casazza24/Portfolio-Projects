@@ -15,6 +15,10 @@ assumptions = {
     "equity_risk_premium": 0.045,
     "risk_free_rate": 0.04,
 
+    # Used only when no historical year has a normal effective tax rate
+    # (see data_fetcher.NORMAL_TAX_RATE_BAND). US federal statutory rate.
+    "fallback_tax_rate": 0.21,
+
     # Legacy flat-rate fallbacks, kept for reference / sensitivity overrides.
     "gross_margin": 0.451,
     "sga_pct_revenue": 0.065,
@@ -42,6 +46,9 @@ def revenue_growth_rates(
         projection_years = assumptions["projection_years"]
     if hold_years is None:
         hold_years = assumptions["hold_years"]
+    if projection_years < 1:
+        raise ValueError("projection_years must be at least 1")
+    hold_years = max(0, min(hold_years, projection_years - 1))
     fade_years = projection_years - hold_years
 
     return [

@@ -9,13 +9,15 @@ from datetime import datetime
 
 from config import assumptions
 from data_fetcher import fetch_financial_data
-from projections import derive_assumptions, project_financials
+from projections import derive_assumptions, project_financials, apply_overrides
 from dcf_engine import calculate_wacc, run_dcf
 from sensitivity import build_sensitivity_tables
 from edgar import analyze_filing, empty_filing
 from excel_output import generate_excel_bytes
-from validation import validate_financials
-from xbrl_fetcher import fetch_xbrl_facts, extract_annual_financials, validate_against_yfinance
+from validation import validate_financials, xbrl_issues, is_reliable, input_provenance
+from xbrl_fetcher import (
+    fetch_xbrl_facts, extract_annual_financials, validate_against_yfinance, summarize_xbrl_report,
+)
 
 st.set_page_config(page_title="DCF Model Generator", page_icon="📊", layout="wide")
 
@@ -23,7 +25,7 @@ st.set_page_config(page_title="DCF Model Generator", page_icon="📊", layout="w
 @st.cache_resource(ttl=300)
 def fetch_data(symbol):
     """Fetch raw financial data (cached separately from model run)."""
-    return fetch_financial_data(symbol)
+    return fetch_financial_data(symbol, assumptions["fallback_tax_rate"])
 
 
 @st.cache_data(ttl=300)
@@ -43,10 +45,7 @@ def run_model(symbol, overrides=None):
     hist_df = data["hist_df"]
     income_stmt = data["income_stmt"]
 
-    derived = derive_assumptions(hist_df, assumptions)
-
-    if overrides:
-        derived.update(overrides)
+    derived = apply_overrides(derive_assumptions(hist_df, assumptions), overrides)
 
     base_revenue = hist_df.loc["Total Revenue"].iloc[0]
     projected = project_financials(base_revenue, derived)
@@ -54,8 +53,8 @@ def run_model(symbol, overrides=None):
 
     wacc_result = calculate_wacc(
         hist_df, info, income_stmt, derived["tax_rate"],
-        risk_free_rate=derived.get("risk_free_rate", 0.04),
-        equity_risk_premium=derived.get("equity_risk_premium", 0.045),
+        risk_free_rate=derived["risk_free_rate"],
+        equity_risk_premium=derived["equity_risk_premium"],
     )
     wacc = wacc_result['wacc']
 
@@ -79,7 +78,11 @@ def run_model(symbol, overrides=None):
     except Exception:
         filing_analysis = None
 
-    fin_warnings = validate_financials(hist_df)
+    xbrl_data = fetch_xbrl(symbol)
+    xbrl_report = validate_against_yfinance(symbol, xbrl_data, hist_df) if xbrl_data else []
+    xbrl_summary = summarize_xbrl_report(xbrl_report)
+    issues = (validate_financials(hist_df, data.get("missing"), derived, wacc_result)
+              + xbrl_issues(xbrl_report, xbrl_summary))
 
     return {
         "info": info,
@@ -100,7 +103,11 @@ def run_model(symbol, overrides=None):
         "sens2_df": sens2_df,
         "filing_analysis": filing_analysis,
         "warning": data.get("warning"),
-        "fin_warnings": fin_warnings,
+        "issues": issues,
+        "reliable": is_reliable(issues),
+        "xbrl_report": xbrl_report,
+        "xbrl_summary": xbrl_summary,
+        "provenance": input_provenance(hist_df, data.get("missing"), xbrl_report),
     }
 
 
@@ -114,11 +121,11 @@ def render_sidebar_overrides(derived):
 
         st.subheader("WACC Inputs")
         overrides["risk_free_rate"] = st.number_input(
-            "Risk-Free Rate", value=derived.get("risk_free_rate", 0.04),
+            "Risk-Free Rate", value=derived["risk_free_rate"],
             min_value=0.0, max_value=0.15, step=0.005, format="%.3f",
         )
         overrides["equity_risk_premium"] = st.number_input(
-            "Equity Risk Premium", value=derived.get("equity_risk_premium", 0.045),
+            "Equity Risk Premium", value=derived["equity_risk_premium"],
             min_value=0.0, max_value=0.15, step=0.005, format="%.3f",
         )
 
@@ -127,28 +134,28 @@ def render_sidebar_overrides(derived):
             "Terminal Growth Rate", value=derived["terminal_growth_rate"],
             min_value=0.0, max_value=0.05, step=0.005, format="%.3f",
         )
-        yr1_growth = derived["revenue_growth_rates"][0] if derived["revenue_growth_rates"] else 0.05
-        new_yr1 = st.number_input(
-            "Year 1 Revenue Growth", value=yr1_growth,
+        # Growth path (hold, then fade to terminal) is rebuilt by apply_overrides.
+        overrides["latest_growth"] = st.number_input(
+            "Year 1 Revenue Growth", value=derived["latest_growth"],
             min_value=-0.50, max_value=1.0, step=0.01, format="%.3f",
         )
-        if new_yr1 != yr1_growth:
-            n = len(derived["revenue_growth_rates"])
-            tgr = overrides["terminal_growth_rate"]
-            overrides["revenue_growth_rates"] = [
-                new_yr1 + (tgr - new_yr1) * i / max(n - 1, 1) for i in range(n)
-            ]
 
         st.subheader("Margins & Costs")
         overrides["gross_margin"] = st.number_input(
             "Gross Margin", value=derived["gross_margin"],
             min_value=0.0, max_value=1.0, step=0.01, format="%.3f",
         )
-        if overrides["gross_margin"] != derived["gross_margin"]:
-            overrides["gross_margins"] = [overrides["gross_margin"]] * len(derived["gross_margins"])
+        overrides["gross_margin_expansion"] = st.number_input(
+            "Gross Margin Expansion (over window)", value=derived["gross_margin_expansion"],
+            min_value=-0.20, max_value=0.20, step=0.01, format="%.3f",
+        )
 
         overrides["sga_pct_revenue"] = st.number_input(
             "SG&A % Revenue", value=derived["sga_pct_revenue"],
+            min_value=0.0, max_value=1.0, step=0.01, format="%.3f",
+        )
+        overrides["rnd_pct_revenue"] = st.number_input(
+            "R&D % Revenue", value=derived["rnd_pct_revenue"],
             min_value=0.0, max_value=1.0, step=0.01, format="%.3f",
         )
         overrides["da_pct_revenue"] = st.number_input(
@@ -192,6 +199,14 @@ def render_summary(results):
     col3.metric("Upside / Downside", f"{upside:+.1%}")
     col4.metric("WACC", f"{results['wacc']:.2%}")
 
+    critical = [i for i in results["issues"] if i["severity"] == "critical"]
+    if critical:
+        st.error(
+            "**Valuation not reliable.** Critical data-validation issues were found; "
+            "the implied price above is diagnostic only. See the Data Validation tab.\n\n"
+            + "\n".join(f"- {i['message']}" for i in critical)
+        )
+
 
 def render_wacc_decomposition(wacc_result):
     """Render the WACC decomposition panel."""
@@ -231,12 +246,14 @@ def render_assumptions(derived):
         st.markdown("**Margins & Costs**")
         st.write(f"Gross Margin (hist avg): {derived['gross_margin']:.1%}")
         st.write(f"SG&A % Revenue: {derived['sga_pct_revenue']:.1%}")
+        st.write(f"R&D % Revenue: {derived['rnd_pct_revenue']:.1%}")
+        st.write(f"Other Opex % Revenue: {derived['other_opex_pct_revenue']:.1%}")
         st.write(f"D&A % Revenue: {derived['da_pct_revenue']:.1%}")
 
     with col3:
         st.markdown("**Capital**")
         st.write(f"CapEx % Revenue: {derived['capex_pct_revenue']:.1%}")
-        st.write(f"Tax Rate: {derived['tax_rate']:.1%}")
+        st.write(f"Tax Rate: {derived['tax_rate']:.1%} ({derived['tax_rate_source']})")
         st.write(f"NWC % Revenue: {derived['nwc_pct_revenue']:.1%}")
 
 
@@ -342,7 +359,7 @@ def render_sensitivity_heatmap(df, title, x_label, y_label, current_price):
             align="center",
         ),
         cells=dict(
-            values=[list(df.index)] + [df[col].map(lambda x: f"${x:,.2f}").tolist() for col in df.columns],
+            values=[list(df.index)] + [df[col].map(lambda x: "n/a" if pd.isna(x) else f"${x:,.2f}").tolist() for col in df.columns],
             fill_color=[["#2E75B6"] * len(df.index)] + [colors_col for colors_col in
                         [[colors[r][c] for r in range(len(df.index))] for c in range(len(df.columns))]],
             font=dict(
@@ -372,48 +389,50 @@ def render_sensitivity(results):
     st.caption("Green = at or above current price, Red = below current price")
 
 
-def render_validation(results, xbrl_data):
-    """Render data validation section."""
-    fin_warnings = results.get("fin_warnings", [])
-    hist_df = results["hist_df"]
+def render_validation(results):
+    """Render data validation section: issues by severity, provenance, XBRL cross-check."""
+    issues = results["issues"]
+    if results["reliable"]:
+        st.success("No critical validation issues.")
+    else:
+        st.error("Critical validation issues: valuation should not be presented as reliable.")
 
-    if fin_warnings:
-        st.subheader("Data Validation Warnings")
-        for w in fin_warnings:
-            st.warning(w)
+    for severity, show in (("critical", st.error), ("warning", st.warning), ("info", st.info)):
+        group = [i for i in issues if i["severity"] == severity]
+        if group:
+            st.markdown(f"**{severity.title()} ({len(group)})**")
+            for i in group:
+                show(i["message"])
 
-    with st.expander("Data Source Validation (SEC XBRL vs Yahoo Finance)"):
-        if xbrl_data is None:
-            st.info("XBRL data unavailable for this ticker.")
-            return
+    st.subheader("Input Provenance (latest fiscal year)")
+    prov = results["provenance"].copy()
+    prov["Value"] = prov["Value"].map(lambda x: "N/A" if x is None or pd.isna(x) else f"{x:,.0f}")
+    st.dataframe(prov, use_container_width=True, hide_index=True)
 
-        report = validate_against_yfinance("", xbrl_data, hist_df)
+    summary = results["xbrl_summary"]
+    with st.expander(f"Data Source Validation (SEC XBRL vs Yahoo Finance): {summary['status']}"):
+        st.caption(summary["reason"])
+        report = results["xbrl_report"]
         if not report:
-            st.info("No overlapping fields to compare.")
             return
 
-        report_df = pd.DataFrame(report)
-        display_df = report_df[report_df['status'].isin(['MATCH', 'MISMATCH'])].copy()
+        display_df = pd.DataFrame(report).drop(columns=["period_end"])
+        fmt = lambda x: "N/A" if x is None or pd.isna(x) else f"{x:,.0f}"
+        display_df['xbrl_val'] = display_df['xbrl_val'].map(fmt)
+        display_df['yf_val'] = display_df['yf_val'].map(fmt)
+        display_df['pct_diff'] = display_df['pct_diff'].map(lambda x: "N/A" if x is None or pd.isna(x) else f"{x:.1%}")
 
-        if display_df.empty:
-            st.info("No comparable data points found between XBRL and Yahoo Finance.")
-            return
-
-        display_df['xbrl_val'] = display_df['xbrl_val'].map(lambda x: f"{x:,.0f}" if x else "N/A")
-        display_df['yf_val'] = display_df['yf_val'].map(lambda x: f"{x:,.0f}" if x else "N/A")
-        display_df['pct_diff'] = display_df['pct_diff'].map(lambda x: f"{x:.1%}" if x is not None else "N/A")
+        colors = {"MATCH": "#c6efce", "MISMATCH": "#ffc7ce"}
 
         def highlight_status(row):
-            if row['status'] == 'MISMATCH':
-                return ['background-color: #ffc7ce'] * len(row)
-            return ['background-color: #c6efce'] * len(row)
+            return [f"background-color: {colors.get(row['status'], '#eeeeee')}"] * len(row)
 
         styled = display_df.style.apply(highlight_status, axis=1)
         st.dataframe(styled, use_container_width=True, hide_index=True)
-
-        n_match = len(display_df[display_df['status'] == 'MATCH'])
-        n_mismatch = len(display_df[display_df['status'] == 'MISMATCH'])
-        st.caption(f"{n_match} matches, {n_mismatch} mismatches (>5% difference)")
+        st.caption(
+            f"{summary['n_match']} matches, {summary['n_mismatch']} mismatches (>5% difference), "
+            f"{summary['n_missing']} missing, {summary['n_noncomparable']} not comparable"
+        )
 
 
 def render_earnings(filing):
@@ -518,8 +537,6 @@ def main():
 
         st.divider()
 
-        xbrl_data = fetch_xbrl(ticker)
-
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "Financials", "DCF Valuation", "Sensitivity",
             "Data Validation", "Earnings Analysis",
@@ -534,7 +551,7 @@ def main():
         with tab3:
             render_sensitivity(results)
         with tab4:
-            render_validation(results, xbrl_data)
+            render_validation(results)
         with tab5:
             render_earnings(filing)
 

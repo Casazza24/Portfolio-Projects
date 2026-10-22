@@ -1,12 +1,18 @@
 """WACC calculation and DCF valuation engine."""
 
 
-def calculate_wacc(hist_df, info, income_stmt, tax_rate, risk_free_rate=0.04, equity_risk_premium=0.045):
+def calculate_wacc(hist_df, info, income_stmt, tax_rate, *, risk_free_rate, equity_risk_premium):
     """Calculate weighted average cost of capital.
 
+    risk_free_rate and equity_risk_premium are required so the configured or
+    user-overridden values always flow through (no hidden defaults).
     Returns a dict with the WACC value and all component assumptions.
     """
-    beta = info.get("beta", 1.0)
+    beta = info.get("beta")
+    beta_source = "reported"
+    if beta is None or beta != beta:
+        beta = 1.0
+        beta_source = "assumed (1.0, beta unavailable)"
     market_cap = info.get("marketCap")
     if not market_cap:
         raise ValueError("market_cap is missing or zero")
@@ -34,6 +40,7 @@ def calculate_wacc(hist_df, info, income_stmt, tax_rate, risk_free_rate=0.04, eq
             'equity_weight': 1.0,
             'debt_weight': 0.0,
             'beta': beta,
+            'beta_source': beta_source,
             'risk_free_rate': risk_free_rate,
             'equity_risk_premium': equity_risk_premium,
             'market_cap': market_cap,
@@ -56,6 +63,7 @@ def calculate_wacc(hist_df, info, income_stmt, tax_rate, risk_free_rate=0.04, eq
         'equity_weight': equity_weight,
         'debt_weight': debt_weight,
         'beta': beta,
+        'beta_source': beta_source,
         'risk_free_rate': risk_free_rate,
         'equity_risk_premium': equity_risk_premium,
         'market_cap': market_cap,
