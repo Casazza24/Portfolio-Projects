@@ -1,279 +1,281 @@
-# Model Reference — RL Market Making
+# Model Reference: RL Market Making
 
-A complete reference for all variables, equations, and notation used in `rl_market_making.ipynb`.
+Notation and equations for the market-making problem studied in this repo.
+
+**Which code this describes.** `rl_market_making_PyTorch.ipynb` is the current, maintained implementation and imports the model, simulator, solvers and policies from the `mm/` package. `rl_market_making.ipynb` (TensorFlow) is an earlier iteration kept for history. The section "Current model" below matches `mm/`. The section "Historical formulation" records what the original notebooks did and what was wrong with it.
 
 ---
 
-## Core Variables
+# Current model
+
+The single source of truth is `mm/model.py` (problem definition), `mm/env.py` (simulator), `mm/dp.py` (exact benchmarks) and `mm/policy.py` (action distribution and gradient estimator).
+
+## Notation
+
+### State and time
 
 | Symbol | Name | Description |
 |--------|------|-------------|
-| $S_t$ | Mid-price | The "fair" price of the bond at time $t$. Midpoint between best bid and best ask in the market. |
-| $q_t$ | Inventory | How many units of the bond the market maker currently holds. Positive = long, negative = short. |
-| $X_t$ | Cash | Accumulated cash from trading. Goes up when you sell, down when you buy. |
-| $T$ | Terminal time | End of the trading session. At $T$, remaining inventory is liquidated. |
-| $\tau = T - t$ | Time remaining | How much time is left. Drives urgency in quoting. |
-| $\Delta t$ (dt) | Time step | Discrete simulation step size. Smaller = more realistic but slower. |
+| $n = 0, \ldots, N-1$ | Step index | Discrete time steps, $N = T / \Delta t$ ($T$ must be an integer multiple of $\Delta t$). |
+| $T$ | Horizon | End of the session. Remaining inventory is marked to market and charged a liquidation cost. |
+| $\Delta t$ (`dt`) | Time step | Simulation step size. |
+| $\tau = T - n\Delta t$ | Time remaining | Drives the urgency of flattening inventory. |
+| $\mathbf{S}_n$ | Mid prices | Vector of bond mid prices. |
+| $\mathbf{q}_n$ | Inventory | Integer vector, $\lvert q_i \rvert \le q_{\max}$. Positive is long, negative is short. $\mathbf{q}_0 = 0$. |
+| $X_n$ | Cash | Increases on a sale, decreases on a purchase. $X_0 = 0$. |
 
----
-
-## Quoting Variables
+### Quotes
 
 | Symbol | Name | Description |
 |--------|------|-------------|
-| $\delta^{\text{bid}}$ | Bid spread | Distance **below** mid-price where the market maker posts a buy order. Bid price = $S_t - \delta^{\text{bid}}$. |
-| $\delta^{\text{ask}}$ | Ask spread | Distance **above** mid-price where the market maker posts a sell order. Ask price = $S_t + \delta^{\text{ask}}$. |
+| $\delta^b_i$ | Bid distance | Bid price is $S_i - \delta^b_i$. |
+| $\delta^a_i$ | Ask distance | Ask price is $S_i + \delta^a_i$. |
+| $[\delta_{\min}, \delta_{\max}]$ | Admissible box | Executed quotes are clipped to this range. |
 
-**Intuition:** Wider spreads = safer (more profit per trade, fewer fills). Narrower spreads = riskier (less profit per trade, more fills, faster inventory accumulation).
+Wider quotes earn more per fill but fill less often, so inventory changes more slowly.
+
+### Parameters (defaults from `MarketParams`)
+
+| Symbol | Code name | Default | Description |
+|--------|-----------|---------|-------------|
+| $T$ | `T` | 1.0 | Horizon. |
+| $\Delta t$ | `dt` | 0.005 | Step size ($N = 200$). |
+| $\sigma$ | `sigma` | 2.0 | Price volatility per $\sqrt{\text{unit time}}$. |
+| $\gamma$ | `gamma` | 0.1 | Risk aversion (mean-variance coefficient). |
+| $k$ | `k` | 1.5 | Decay of arrival intensity in the quote distance. |
+| $A$ | `A` | 140.0 | Arrival intensity at zero distance. |
+| $q_{\max}$ | `q_max` | 5 | Inventory limit per bond. |
+| $\ell$ | `terminal_penalty` | 0.1 | Terminal liquidation cost per unit$^2$. |
+| $\delta_{\min}, \delta_{\max}$ | `delta_min`, `delta_max` | 0.01, 5.0 | Quote box. |
+| $\rho$ | `correlation` | 0 | Pairwise price correlation (multi-bond; experiments use 0.6 to 0.7). |
+| $\phi = \gamma\sigma^2/2$ | `running_penalty` | 0.2 | Single-bond running coefficient on $q^2$. |
+
+**Notation note.** $\gamma$ is always risk aversion. The RL code uses undiscounted returns (finite horizon), so there is no discount factor in the current model. $A$ (intensity) and $A_i$ (ask fill indicator) are distinguished by the subscript.
+
+## Price dynamics
+
+Arithmetic Brownian motion with no drift: $d\mathbf{S}_t = L\, d\mathbf{W}_t$ with covariance per unit time
+
+$$\Sigma = \sigma^2 C, \qquad C_{ii} = 1,\; C_{ij} = \rho \;(i \ne j).$$
+
+In discrete time,
+
+$$\mathbf{S}_{n+1} = \mathbf{S}_n + \sigma\sqrt{\Delta t}\, L_C \mathbf{Z}_n, \qquad \mathbf{Z}_n \sim \mathcal{N}(0, I),\quad C = L_C L_C^T,$$
+
+so $\operatorname{Cov}(\mathbf{S}_{n+1} - \mathbf{S}_n) = \Sigma\,\Delta t$. No drift means the dealer has no directional view and earns from the spread. Because prices are driftless, the optimal quotes depend only on $(\tau, \mathbf{q})$, and the observation given to the RL agent excludes prices.
+
+## Fill model
+
+The arrival intensity at distance $\delta$ is $\lambda(\delta) = A e^{-k\delta}$. The per-step fill probability is
+
+$$p(\delta) = \min\left(1,\; A e^{-k\delta}\,\Delta t\right).$$
+
+For each bond $i$, independently across bonds and across the two sides,
+
+$$B_i \sim \text{Bern}\big(p(\delta^b_i)\big) \text{ if } q_{n,i} < q_{\max}, \text{ else } 0, \qquad A_i \sim \text{Bern}\big(p(\delta^a_i)\big) \text{ if } q_{n,i} > -q_{\max}, \text{ else } 0,$$
+
+$$\mathbf{q}_{n+1} = \mathbf{q}_n + \mathbf{B} - \mathbf{A}.$$
+
+- Both limit checks use the start-of-step inventory $\mathbf{q}_n$, so $\mathbf{q}_{n+1}$ always stays in $[-q_{\max}, q_{\max}]$.
+- Both sides can fill in the same step (probability $p(\delta^b)p(\delta^a)$). Inventory is then unchanged and the dealer earns $\delta^b + \delta^a$.
+- At the defaults $A\Delta t = 0.7 < 1$, so the cap at 1 never binds on the quote box.
+
+## Objective
+
+The dealer maximizes
+
+$$J = \mathbb{E}\left[ X_N + \mathbf{q}_N \cdot \mathbf{S}_N \;-\; \sum_{n=0}^{N-1} \frac{\gamma}{2}\, \mathbf{q}_{n+1}^T \Sigma\, \mathbf{q}_{n+1}\, \Delta t \;-\; \ell\, \lvert \mathbf{q}_N \rvert^2 \right].$$
+
+- $X_N + \mathbf{q}_N \cdot \mathbf{S}_N$: terminal wealth (cash plus inventory marked at mid).
+- Running term: a mean-variance penalty. Over one step, holding $\mathbf{q}_{n+1}$ has mark-to-market P&L $\mathbf{q}_{n+1} \cdot (\mathbf{S}_{n+1} - \mathbf{S}_n)$ with variance $\mathbf{q}_{n+1}^T \Sigma\, \mathbf{q}_{n+1}\,\Delta t$. Summing $\frac{\gamma}{2}\times$ variance over steps makes $\gamma$ a genuine risk-aversion coefficient and is how volatility and correlation enter the objective. For one bond the term is $\phi\, q_{n+1}^2 \Delta t$ with $\phi = \gamma\sigma^2/2$.
+- $\ell \lvert \mathbf{q}_N \rvert^2$: terminal liquidation cost, separate from risk aversion.
+
+### Per-step reward
+
+The simulator pays
+
+$$r_n = \mathbf{B}\cdot\boldsymbol{\delta}^b + \mathbf{A}\cdot\boldsymbol{\delta}^a + \mathbf{q}_{n+1}\cdot(\mathbf{S}_{n+1} - \mathbf{S}_n) - \frac{\gamma}{2}\,\mathbf{q}_{n+1}^T \Sigma\, \mathbf{q}_{n+1}\,\Delta t \;\;\big[-\,\ell\,\lvert\mathbf{q}_N\rvert^2 \text{ at } n = N-1\big].$$
+
+These rewards telescope to the objective. The cash change in a step is $\Delta X_n = \mathbf{B}\cdot\boldsymbol{\delta}^b + \mathbf{A}\cdot\boldsymbol{\delta}^a - \mathbf{S}_n\cdot(\mathbf{q}_{n+1} - \mathbf{q}_n)$, and $\Delta(\mathbf{q}\cdot\mathbf{S}) = \mathbf{q}_{n+1}\cdot(\mathbf{S}_{n+1} - \mathbf{S}_n) + \mathbf{S}_n\cdot(\mathbf{q}_{n+1} - \mathbf{q}_n)$. Adding them, the $\mathbf{S}_n$ terms cancel, and with $X_0 = 0$, $\mathbf{q}_0 = 0$,
+
+$$\sum_{n=0}^{N-1} r_n = X_N + \mathbf{q}_N\cdot\mathbf{S}_N - \sum_n \frac{\gamma}{2}\,\mathbf{q}_{n+1}^T\Sigma\,\mathbf{q}_{n+1}\Delta t - \ell\lvert\mathbf{q}_N\rvert^2.$$
+
+The price term has zero conditional mean, so it drops out of the Bellman recursion and only adds Monte Carlo variance.
+
+For the multi-bond shared actor the reward is split per bond, with bond $i$ charged the risk share $\frac{\gamma}{2} q_i (\Sigma \mathbf{q})_i \Delta t$. The shares sum to the portfolio penalty.
+
+## Single bond: discrete Bellman recursion
+
+This is the exact optimum of the simulator the RL agent trains in (`dp.solve_single_bond`). The original notebooks called it the finite-difference (FD) solution. Define the post-fill value net of the running penalty
+
+$$W_{n+1}(q') = V_{n+1}(q') - \phi\, q'^2\,\Delta t, \qquad V_N(q) = -\ell q^2.$$
+
+With $p_b = p(\delta^b)\,\mathbb{1}[q < q_{\max}]$ and $p_a = p(\delta^a)\,\mathbb{1}[q > -q_{\max}]$,
+
+$$V_n(q) = \max_{\delta^b, \delta^a} \Big[ p_b\delta^b + p_a\delta^a + p_b(1-p_a)\,W_{n+1}(q+1) + p_a(1-p_b)\,W_{n+1}(q-1) + \big(p_b p_a + (1-p_b)(1-p_a)\big)\,W_{n+1}(q) \Big].$$
+
+The last coefficient includes the both-sides-fill outcome $p_b p_a$, which leaves inventory unchanged. $V_0(0)$ is the optimal expected objective; at the defaults it is about 66.2.
+
+### Per-quote maximizer
+
+Holding $\delta^a$ fixed, the bracket depends on $\delta^b$ as $p_b(\delta^b + C_b) + \text{const}$, where
+
+$$C_b = \big[(1-p_a)W(q+1) + p_a W(q)\big] - \big[(1-p_a)W(q) + p_a W(q-1)\big]$$
+
+is the expected gain in continuation value from a bid fill, averaged over the ask outcome. Symmetrically $C_a = \big[(1-p_b)W(q-1) + p_b W(q)\big] - \big[(1-p_b)W(q) + p_b W(q+1)\big]$. Where the cap does not bind, $p(\delta) = A\Delta t\, e^{-k\delta}$, and
+
+$$f(\delta) = e^{-k\delta}(\delta + C), \qquad f'(\delta) = e^{-k\delta}\big(1 - k(\delta + C)\big),$$
+
+which is positive for $\delta < 1/k - C$ and negative above it. $f$ is unimodal, so its maximum over an interval is the unconstrained maximizer clipped to the interval:
+
+$$\delta^{b*} = \operatorname{clip}\!\left(\frac{1}{k} - C_b,\; \delta_{\min}, \delta_{\max}\right), \qquad \delta^{a*} = \operatorname{clip}\!\left(\frac{1}{k} - C_a,\; \delta_{\min}, \delta_{\max}\right).$$
+
+Because $C_b$ depends on $p_a$ and $C_a$ on $p_b$, the solver iterates the two coordinates to a fixed point; `tests/test_single_bond.py` checks the result against brute-force search over the quote box. If $A\Delta t > 1$, the solver raises the lower bound to $\ln(A\Delta t)/k$, since below it $p = 1$ is flat and a wider quote is strictly better.
+
+The same recursion with fixed quotes (`dp.evaluate_single_bond_policy`) gives the exact expected objective of any Markov policy, with no Monte Carlo error.
+
+## Single bond: continuous-time limit
+
+As $\Delta t \to 0$, without quote bounds, write the value as $x + qS + h(t, q)$. The $S$-diffusion term vanishes (the value is linear in $S$), so $\sigma$ enters only through $\phi$. The HJB equation is
+
+$$\frac{\partial h}{\partial t} - \phi q^2 + \max_{\delta^b} A e^{-k\delta^b}\big(\delta^b + h(q+1) - h(q)\big) + \max_{\delta^a} A e^{-k\delta^a}\big(\delta^a + h(q-1) - h(q)\big) = 0, \qquad h(T, q) = -\ell q^2,$$
+
+with the bid term absent at $q = q_{\max}$ and the ask term absent at $q = -q_{\max}$. Each inner maximum is attained at $\delta^* = 1/k - \big(h(q\pm1) - h(q)\big)$ with value $\frac{A}{e k}\exp\big(k[h(q\pm1) - h(q)]\big)$. The substitution $h = \frac{1}{k}\ln w$ makes the equation linear:
+
+$$\frac{dw}{dt} = -M w, \qquad M_{qq} = -k\phi q^2, \quad M_{q,q\pm1} = \frac{A}{e},$$
+
+with $M$ tridiagonal and zero beyond the inventory limits. Hence
+
+$$w(t) = \exp\big(M(T - t)\big)\, w(T), \qquad w(T, q) = e^{-k\ell q^2},$$
+
+$$\delta^{b*}(t, q) = \frac{1}{k} - \big(h(t, q+1) - h(t, q)\big), \qquad \delta^{a*}(t, q) = \frac{1}{k} - \big(h(t, q-1) - h(t, q)\big).$$
+
+(`dp.continuous_time_solution`; Cartea, Jaimungal and Penalva 2015, ch. 10.) This is an independent check on the discrete recursion, not the same object at finite $\Delta t$: at the defaults $h(0, 0) \approx 65.2$ versus $V_0(0) \approx 66.2$. With a wide quote box the discrete value converges to it at first order in $\Delta t$ (`test_dp_converges_to_continuous_time_closed_form`).
+
+## Multi-bond
+
+For $n$ bonds the running penalty is
+
+$$\frac{\gamma}{2}\,\mathbf{q}^T\Sigma\,\mathbf{q}\,\Delta t = \phi\Big(\sum_i q_i^2 + 2\rho\sum_{i<j} q_i q_j\Big)\Delta t.$$
+
+### Separable formulation (`dp.solve_separable`)
+
+Quote every bond with the single-bond optimum, ignoring cross-bond covariance. When $\rho = 0$, fills, prices and penalties decompose bond by bond, so $V(\mathbf{q}) = \sum_i V_1(q_i)$ and this policy is exact. For $\rho \ne 0$ it is suboptimal (the coupled solver strictly beats it from $\mathbf{q} = 0$ in the two-bond tests for $\rho \in \{0.3, 0.6, 0.9\}$). Its value does not depend on $\rho$ when starting from $\mathbf{q}_0 = 0$: under this policy inventories evolve independently, and by the bid/ask symmetry of the single-bond solution each has mean zero, so $\mathbb{E}[q_i q_j] = \mathbb{E}[q_i]\,\mathbb{E}[q_j] = 0$ and the expected cross term vanishes. Its cost is one single-bond solve, independent of $n$ for identical bonds.
+
+### Coupled formulation (`dp.solve_coupled`)
+
+The exact optimum with the full covariance penalty, on the grid of $(2q_{\max}+1)^n$ inventory vectors. The recursion is the multi-bond version of the one above, with $W_{n+1}(\mathbf{q}') = V_{n+1}(\mathbf{q}') - \frac{\gamma}{2}\mathbf{q}'^T\Sigma\,\mathbf{q}'\,\Delta t$, $V_N(\mathbf{q}) = -\ell\lvert\mathbf{q}\rvert^2$, and the expectation over all $3^n$ net moves in $\{-1, 0, 1\}^n$ (per bond: $+1$ with probability $p_b(1-p_a)$, $0$ with $p_b p_a + (1-p_b)(1-p_a)$, $-1$ with $p_a(1-p_b)$). The $2n$ quotes per state are found by coordinate ascent, each coordinate using the same clipped maximizer $\operatorname{clip}(1/k - C)$, with $C$ now averaged over the other bonds' moves as well. `dp.evaluate_coupled_policy` scores any Markov policy exactly under the coupled objective.
+
+**Curse of dimensionality.** With $q_{\max} = 5$ the grid has $11^n$ states: 11 (1 bond), 121 (2), 1,331 (3), 161,051 (5), about 25.9 billion (10). The coupled solver is intended as ground truth for $n \le 3$; beyond that, RL and Monte Carlo evaluation are used.
+
+## Actor-critic RL
+
+### Observations
+
+- Single bond and flat multi-bond actor: $s = (\tau,\; q_1/q_{\max}, \ldots, q_n/q_{\max})$. Prices are excluded (see Price dynamics).
+- Parameter-shared multi-bond actor: per-bond features $\big(\tau,\; q_i/q_{\max},\; (C\mathbf{q})_i/(q_{\max} n),\; i/(n-1)\big)$, with the same weights for every bond.
+
+### Actor and action distribution
+
+The network outputs a mean quote $\mu_\theta(s)$ through a softplus, and a state-independent learnable log-std. A raw action is sampled as $a \sim \mathcal{N}(\mu_\theta(s), \operatorname{diag}(\text{std}^2))$, and the executed quote is $\operatorname{clip}(a, \delta_{\min}, \delta_{\max})$. The clip is treated as part of the environment, so the policy is the Gaussian over the raw action and the score-function estimator is
+
+$$\nabla_\theta J = \mathbb{E}\Big[\nabla_\theta \log \mathcal{N}\big(a;\, \mu_\theta(s), \text{std}\big)\cdot \hat{A}\Big], \quad \text{evaluated at the raw (unclipped) sample } a.$$
+
+This is unbiased for the return of exactly this sampling procedure. Evaluated deterministically, the policy executes $\operatorname{clip}(\mu_\theta(s))$.
+
+### Training
+
+Monte Carlo policy gradient with a learned state-value baseline (REINFORCE with baseline), one update per episode, gradient-norm clipping at 1.0:
+
+$$G_n = \sum_{m \ge n} r_m \;\;(\text{undiscounted}), \qquad \hat{A}_n = G_n - V_\psi(s_n), \qquad L_\psi = \frac{1}{N}\sum_n \big(G_n - V_\psi(s_n)\big)^2.$$
+
+The shared multi-bond actor weights bond $i$'s log-probability by its own return-to-go (computed from the per-bond reward split above) minus the critic baseline.
+
+### Critics compared (Section 3 of the notebook)
+
+- Linear: $\hat V(s) = \mathbf{w}^T s + b$. Can represent only hyperplanes, so not the bowl shape of the value in $\mathbf{q}$.
+- Quadratic features: $\hat V(s) = \mathbf{w}^T[s,\; s_i s_j\;\forall\, i \le j] + b$. Can represent any quadratic in the features exactly, including the $q_i q_j$ cross terms.
+- Neural network: a 2-hidden-layer ReLU MLP $f_\psi(s)$.
+
+The exact value function is not purely quadratic: its curvature changes with $\tau$ and it has boundary effects at $\lvert q_i\rvert = q_{\max}$ (one side cannot trade), which the quadratic critic cannot represent exactly.
+
+## Parameter relationships
+
+Computed with `dp.solve_single_bond` by changing one default at a time (spread is $\delta^b + \delta^a$ at $q = 0$, $t = 0$; skew is $\delta^b(q{=}1) - \delta^b(q{=}0)$):
+
+| If you increase... | Effect on the optimal quotes |
+|---|---|
+| $\gamma$ (risk aversion) | Stronger inventory skew; spread at $q = 0$ slightly wider. |
+| $\sigma$ (volatility) | Same direction as $\gamma$, since both enter only through $\phi = \gamma\sigma^2/2$. |
+| $k$ (arrival decay) | Narrower spread (the base distance scales like $1/k$) and weaker skew. |
+| $A$ (arrival intensity) | Slightly narrower spread and weaker skew. |
+| $\ell$ (terminal cost) | Stronger skew near $T$; little effect early in the session. |
+| $\rho$ (correlation) | Inventory in one bond skews the optimal quotes of the others (`test_correlated_inventory_skews_the_other_bond`); the separable policy ignores this. |
+| $\tau$ (time left) | At the defaults the skew is about 0.06 at $\tau = T$ and 0.19 one step before $T$. |
 
 ---
 
-## Model Parameters
+# Historical formulation (original notebooks)
 
-| Symbol | Name | Notebook Value | Description |
-|--------|------|---------------|-------------|
-| $\sigma$ | Volatility | 2.0 | How much the mid-price moves per unit time. Higher = more inventory risk. |
-| $\gamma$ | Risk aversion | 0.1 | How much the market maker dislikes holding inventory. Higher = more aggressive inventory reduction. |
-| $k$ | Arrival sensitivity | 1.5 | How quickly order arrival drops off as spread widens. Higher = more sensitive customers. |
-| $A$ | Base arrival rate | 140.0 | Maximum possible order intensity (when spread → 0). |
-| $q_{\max}$ | Inventory limit | 5 or 10 | Hard cap on inventory position (prevents blowup). |
-| $\rho$ | Correlation | 0.6–0.7 | Correlation between bond price movements (multi-bond only). |
+This section records the formulation used by the original notebooks (TensorFlow first, then the first PyTorch version) before the correctness pass. It is kept for history and is **not** the current model. `mm/legacy.py` reproduces the old FD solver and the old closed-form quotes so they can be scored under the corrected objective.
 
----
-
-## Price Dynamics
-
-$$dS_t = \sigma \, dW_t$$
-
-- This is **arithmetic Brownian motion** (no drift, constant volatility).
-- $W_t$ is a Wiener process (standard Brownian motion) — continuous random walk.
-- In discrete time: $S_{t+\Delta t} = S_t + \sigma \sqrt{\Delta t} \cdot Z$, where $Z \sim \mathcal{N}(0,1)$.
-- **Why no drift?** For market making over short horizons, we assume no directional view — the market maker profits from the spread, not from price prediction.
-
-**Multi-bond version:** For $n$ bonds with correlation matrix $\Sigma$:
-
-$$\mathbf{S}_{t+\Delta t} = \mathbf{S}_t + \sigma \sqrt{\Delta t} \cdot L \mathbf{Z}$$
-
-where $L$ is the Cholesky decomposition of the correlation matrix ($\Sigma = LL^T$) and $\mathbf{Z}$ is a vector of independent standard normals. This ensures the price changes are correlated.
-
----
-
-## Order Arrival Model
-
-$$\lambda(\delta) = A \cdot e^{-k\delta}$$
-
-- $\lambda(\delta)$ is the **intensity** (expected arrivals per unit time) given a spread of $\delta$.
-- Exponential decay: as you widen the spread, fewer customers are willing to trade.
-- In discrete time, the probability of a fill in one step: $P(\text{fill}) = \lambda(\delta) \cdot \Delta t = A e^{-k\delta} \Delta t$.
-
-**Why exponential?** It's a standard model in market microstructure (Avellaneda-Stoikov). It captures the empirical observation that order flow is highly sensitive to quoted prices near the market, but insensitive far away.
-
----
-
-## Objective Function
-
-The market maker maximizes:
+## Objective (historical)
 
 $$\max_{\delta^{\text{bid}}, \delta^{\text{ask}}} \; \mathbb{E}\left[ X_T + q_T S_T - \gamma q_T^2 \right]$$
 
-Breaking this down:
-- $X_T$ — total cash accumulated from trading
-- $q_T S_T$ — mark-to-market value of remaining inventory
-- $-\gamma q_T^2$ — **penalty for holding inventory at terminal time**
+- $X_T$: total cash accumulated from trading
+- $q_T S_T$: mark-to-market value of remaining inventory
+- $-\gamma q_T^2$: penalty for holding inventory at terminal time, the only penalty in this objective
 
-The penalty term is crucial: without it, the market maker could accumulate huge positions. The quadratic form means the penalty grows rapidly — holding 5 units is 25× worse than holding 1 unit.
+The RL environment, however, paid a running penalty during the episode and a terminal reward at the end:
 
----
+$$r_t = -\gamma\, q_t^2\, \Delta t, \qquad r_T = X_T + q_T S_T - \gamma q_T^2.$$
 
-## The HJB Equation
+Multi-bond terminal reward:
+
+$$r_T = X_T + \sum_i q_i S_i - \gamma \sum_i q_i^2 - \gamma \sum_{i<j} \rho_{ij} q_i q_j$$
+
+The PyTorch notebook used undiscounted returns; the TensorFlow multi-bond trainer discounted with $\gamma_{\text{disc}} = 0.99$. The state included normalized prices $S/100$.
+
+## HJB equation (historical text)
 
 The Hamilton-Jacobi-Bellman equation for the value function $V(t, q)$:
 
 $$\frac{\partial V}{\partial t} + \frac{\sigma^2}{2}\frac{\partial^2 V}{\partial S^2} + \max_{\delta^a, \delta^b} \left[ \lambda(\delta^a)\left(V(q-1) - V(q) + \delta^a\right) + \lambda(\delta^b)\left(V(q+1) - V(q) + \delta^b\right) \right] = 0$$
 
 **Term by term:**
-- $\frac{\partial V}{\partial t}$ — how value changes with time (time decay)
-- $\frac{\sigma^2}{2}\frac{\partial^2 V}{\partial S^2}$ — effect of price volatility on value (diffusion term)
-- $\lambda(\delta^a)(V(q-1) - V(q) + \delta^a)$ — expected gain from an ask fill: you sell one unit (inventory drops by 1), capture spread $\delta^a$, and your value function shifts accordingly
-- $\lambda(\delta^b)(V(q+1) - V(q) + \delta^b)$ — same logic for a bid fill (buy one unit)
+- $\frac{\partial V}{\partial t}$: how value changes with time
+- $\frac{\sigma^2}{2}\frac{\partial^2 V}{\partial S^2}$: effect of price volatility on value (diffusion term)
+- $\lambda(\delta^a)(V(q-1) - V(q) + \delta^a)$: expected gain from an ask fill (sell one unit, capture $\delta^a$)
+- $\lambda(\delta^b)(V(q+1) - V(q) + \delta^b)$: same for a bid fill (buy one unit)
 
-**Terminal condition:** $V(T, q) = -\gamma q^2$ (just the inventory penalty at expiry).
+**Terminal condition:** $V(T, q) = -\gamma q^2$.
 
----
+The FD solver discretized this backward from the terminal condition on the grid $t \in \{0, \Delta t, \ldots, T\}$, $q \in \{-q_{\max}, \ldots, q_{\max}\}$, choosing quotes at each state by the first-order condition.
 
-## Optimal Quotes (Analytical Solution)
+## "Analytical" optimal quotes (historical)
 
-From the first-order conditions of the HJB equation:
+$$\delta^{\text{bid}*} = \frac{1}{k} \ln\left(1 + \frac{k}{\gamma}\right) + \gamma(T-t) \cdot q, \qquad \delta^{\text{ask}*} = \frac{1}{k} \ln\left(1 + \frac{k}{\gamma}\right) - \gamma(T-t) \cdot q$$
 
-$$\delta^{\text{bid}*} = \frac{1}{k} \ln\left(1 + \frac{k}{\gamma}\right) + \gamma(T-t) \cdot q$$
+These were described as a base spread $\frac{1}{k}\ln(1 + k/\gamma)$ plus an inventory skew $\pm\gamma(T-t)q$.
 
-$$\delta^{\text{ask}*} = \frac{1}{k} \ln\left(1 + \frac{k}{\gamma}\right) - \gamma(T-t) \cdot q$$
+## What was wrong
 
-**Interpretation:**
+a. **Two different objectives.** The RL environment used a running plus terminal penalty, while the FD solver used the terminal penalty only. The RL agent and the benchmark it was compared against were optimizing different problems.
 
-- **Base spread:** $\frac{1}{k} \ln\left(1 + \frac{k}{\gamma}\right)$ — the "symmetric" component. Depends only on parameters, not state. This is the spread you'd quote with zero inventory.
-- **Skew term:** $\pm \gamma(T-t) \cdot q$ — the inventory-dependent adjustment.
-  - When $q > 0$ (long): bid spread **widens** (less eager to buy more), ask spread **narrows** (eager to sell)
-  - When $q < 0$ (short): opposite
-  - As $T-t \to 0$ (near terminal): skew increases — urgency to flatten inventory before the penalty hits
+b. **Volatility did not enter.** $\sigma$ appeared in the HJB text but not in the FD recursion or in the objective. The value is linear in $S$, so the $\frac{\sigma^2}{2}V_{SS}$ term is zero, and with no variance penalty the solution was the same for every $\sigma$.
 
----
+c. **Missing both-fill term.** The FD recursion added the bid and ask terms separately, which drops the probability that both sides fill in the same step. The simulator allowed both fills, so the recursion was not the Bellman equation of the simulator.
 
-## Finite Difference Method
+d. **The closed form is not Avellaneda-Stoikov.** The Avellaneda-Stoikov approximation has a spread term $\frac{1}{\gamma}\ln(1 + \gamma/k)$ (not $\frac{1}{k}\ln(1 + k/\gamma)$) and an inventory skew $\gamma\sigma^2(T-t)q$ (not $\gamma(T-t)q$). Scored exactly under the corrected objective at the defaults, the historical formula earns about 30.5, against an optimum of about 66.2.
 
-**What it does:** Solves the HJB equation numerically by discretizing time and inventory onto a grid, then working backward from the terminal condition.
+e. **Multi-bond penalty and solver.** The penalty $\gamma\big(\sum_i q_i^2 + \sum_{i<j}\rho\, q_i q_j\big)$ gives the cross terms half the weight they have in portfolio variance, $\sum_i q_i^2 + 2\rho\sum_{i<j} q_i q_j$ (times $\sigma^2$). The multi-bond FD solver ignored correlation entirely.
 
-**Grid:** 
-- Time axis: $t \in \{0, \Delta t, 2\Delta t, \ldots, T\}$ — $N_t$ points
-- Inventory axis: $q \in \{-q_{\max}, \ldots, -1, 0, 1, \ldots, q_{\max}\}$ — $N_q = 2q_{\max}+1$ points
-
-**Algorithm:**
-1. Set $V(T, q) = -\gamma q^2$ for all $q$ (terminal condition)
-2. For $t = T-\Delta t, T-2\Delta t, \ldots, 0$:
-   - For each inventory $q$:
-     - Search over all $(\delta^{\text{bid}}, \delta^{\text{ask}})$ combinations
-     - Compute expected value using the Bellman equation
-     - Store the best value and corresponding optimal quotes
-
-**Curse of dimensionality:** For $n$ bonds, the inventory grid has $(2q_{\max}+1)^n$ points. With $q_{\max}=5$:
-- 1 bond: 11 states
-- 2 bonds: 121 states
-- 3 bonds: 1,331 states
-- 5 bonds: 161,051 states
-- 10 bonds: ~25 billion states (impossible)
+f. **Biased policy gradient.** The log-probability was evaluated at the clamped action instead of the raw Gaussian sample. Whenever the clamp binds this scores a point that was not sampled. In a test near the lower bound ($\mu = 0.05$, std $= 0.3$, about 45% of samples clamped), the estimated gradient with respect to the mean had the wrong sign (true about $+0.04$, estimate about $-0.05$; `tests/test_policy.py`).
 
 ---
 
-## Actor-Critic RL
+# References
 
-### State Representation
-
-The RL agent observes:
-
-$$s = (\tau, \; q/q_{\max}, \; S/100)$$
-
-- $\tau$: time remaining (normalized between 0 and $T$)
-- $q/q_{\max}$: inventory normalized to $[-1, 1]$
-- $S/100$: price normalized around initial value
-
-For multi-bond: $s = (\tau, \; q_1/q_{\max}, \ldots, q_n/q_{\max}, \; S_1/100, \ldots, S_n/100)$
-
-### Actor (Policy Network)
-
-Maps state → action (bid/ask spreads):
-
-$$\pi_\theta(s) \to (\mu_{\text{bid}}, \mu_{\text{ask}})$$
-
-- Output passes through **softplus** ($\ln(1 + e^x)$) to ensure spreads are always positive
-- Actions are sampled from $\mathcal{N}(\mu, \sigma^2)$ during training (exploration)
-- $\sigma$ is a learnable parameter (log-std)
-
-### Critic (Value Network)
-
-Maps state → scalar value estimate:
-
-$$V_\phi(s) \to \hat{V}(s)$$
-
-This approximates the true value function from the HJB equation.
-
-### Training Update
-
-**Returns:** For an episode with rewards $r_0, r_1, \ldots, r_T$:
-
-$$G_t = r_t + \gamma_{\text{disc}} \cdot r_{t+1} + \gamma_{\text{disc}}^2 \cdot r_{t+2} + \ldots$$
-
-where $\gamma_{\text{disc}} = 0.99$ is the discount factor (not the same as risk aversion $\gamma$!).
-
-**Advantage:** How much better the actual return was vs. what the critic predicted:
-
-$$A_t = G_t - V_\phi(s_t)$$
-
-**Actor update (policy gradient):**
-
-$$\nabla_\theta J = \mathbb{E}\left[ \nabla_\theta \log \pi_\theta(a_t | s_t) \cdot A_t \right]$$
-
-Intuition: if an action led to better-than-expected returns ($A_t > 0$), increase its probability.
-
-**Critic update (MSE):**
-
-$$L_\phi = \frac{1}{N} \sum_t (G_t - V_\phi(s_t))^2$$
-
-Intuition: train the critic to predict actual returns accurately.
-
----
-
-## Reward Function
-
-**Per-step reward (during episode):**
-
-$$r_t = -\gamma \cdot q_t^2 \cdot \Delta t$$
-
-This is a running inventory penalty — discourages accumulating large positions even mid-episode.
-
-**Terminal reward (at $t = T$):**
-
-$$r_T = X_T + q_T S_T - \gamma q_T^2$$
-
-Total wealth (cash + inventory value) minus final inventory penalty.
-
-**Multi-bond terminal reward:**
-
-$$r_T = X_T + \sum_i q_i S_i - \gamma \sum_i q_i^2 - \gamma \sum_{i<j} \rho_{ij} q_i q_j$$
-
-The cross-term $\rho_{ij} q_i q_j$ penalizes holding correlated positions in the same direction — this is what makes the value function nonlinear and is why linear approximation fails.
-
----
-
-## Section 3: Linear vs Neural Network
-
-### Linear Critic
-
-$$\hat{V}(s) = \mathbf{w}^T \mathbf{s} + b$$
-
-This is literally linear regression on the state features. It can only represent hyperplanes — it cannot capture the bowl-shaped (quadratic) value function.
-
-### Quadratic Feature Critic
-
-$$\hat{V}(s) = \mathbf{w}^T [\mathbf{s}, \; s_i s_j \; \forall \; i \leq j] + b$$
-
-We manually add all pairwise products as features. This gives linear regression its "best shot" — it can now represent quadratic surfaces. But it still struggles because the true value function has complex time-dependent and boundary interactions that aren't purely quadratic.
-
-### Neural Network Critic
-
-$$\hat{V}(s) = f_\phi(s)$$
-
-A 2-hidden-layer neural network with ReLU activations. Can approximate any continuous function (universal approximation theorem). Automatically discovers the right nonlinear features.
-
-### Why NN Wins
-
-The true value function has:
-- **Quadratic** individual inventory terms: $q_i^2$
-- **Cross terms** from correlation: $q_i q_j$
-- **Time-dependent** curvature: the penalty structure changes as $\tau \to 0$
-- **Boundary effects**: behavior near $q_{\max}$ is discontinuous (can't buy/sell more)
-
-A linear model captures none of these. A quadratic feature model captures the first two but not the last two. The neural network captures all of them.
-
----
-
-## Key Parameter Relationships
-
-| If you increase... | Effect on optimal strategy |
-|---|---|
-| $\gamma$ (risk aversion) | Narrower base spread, stronger inventory skewing |
-| $k$ (arrival sensitivity) | Wider base spread (customers are price-sensitive) |
-| $\sigma$ (volatility) | More aggressive inventory reduction (holding is riskier) |
-| $\rho$ (correlation) | More cross-hedging between bonds, stronger nonlinearity |
-| $A$ (base arrival) | Can afford wider spreads (still get fills) |
-| $T-t$ (time left) | Less urgency → weaker skewing. Near terminal → aggressive flattening |
-
----
-
-## Notation Summary
-
-| Context | $\gamma$ meaning |
-|---------|-----------------|
-| Model parameter | Risk aversion coefficient (inventory penalty weight) |
-| RL discount | $\gamma_{\text{disc}} = 0.99$ (how much future rewards are discounted) |
-
-These are different! The notebook uses `gamma` for risk aversion and `gamma_disc` for the RL discount factor.
+- Avellaneda, M. and Stoikov, S. (2008). High-frequency trading in a limit order book. *Quantitative Finance*, 8(3), 217-224. Source of the exponential arrival model $\lambda(\delta) = A e^{-k\delta}$.
+- Cartea, Á., Jaimungal, S. and Penalva, J. (2015). *Algorithmic and High-Frequency Trading*. Cambridge University Press, ch. 10. Source of the running inventory penalty and the matrix-exponential closed form used in `dp.continuous_time_solution`.
