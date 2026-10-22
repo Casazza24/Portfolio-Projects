@@ -1,2 +1,8 @@
 __pycache__/
 .pytest_cache/
+# Resume cache (duplicates results/multi_bond_*.json) and non-demo weights
+results/runs/
+results/models/*
+!results/models/single_bond_s0_ep2000.pt
+!results/models/B_linear_n2_rho0.9_s0_ep1500.pt
+!results/models/B_neural_network_n2_rho0.9_s0_ep1500.pt

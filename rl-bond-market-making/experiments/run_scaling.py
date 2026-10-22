@@ -37,6 +37,12 @@ import sys
 import time
 import tracemalloc
 
+# Single-threaded numerics: keeps the laptop responsive and makes timings
+# comparable (BLAS threads otherwise oversubscribe the O(n^2) products).
+for _var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+             "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
+
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
