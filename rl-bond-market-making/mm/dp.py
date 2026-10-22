@@ -26,7 +26,7 @@ fixed point against brute-force search over the quote box.
 import numpy as np
 from scipy.linalg import expm
 
-from .model import MarketParams
+from .model import MarketParams, covariance_matrix
 
 
 def _bounds(p):
@@ -146,3 +146,158 @@ def continuous_time_solution(params=MarketParams(), t=0.0):
     d_bid[q == p.q_max] = np.nan
     d_ask[q == -p.q_max] = np.nan
     return h, d_bid, d_ask
+
+
+# ---------------------------------------------------------------- multi-bond
+
+def solve_separable(params=MarketParams(), n_bonds=1):
+    """Independent-risk baseline: every bond quoted by the single-bond optimum.
+
+    Exact when the price correlation is zero (the objective, fills and
+    penalties then decompose bond by bond, so V(q) = sum_i V_1(q_i)). For
+    rho != 0 it is the policy that ignores cross-bond covariance; score it
+    under the true coupled objective with evaluate_coupled_policy or Monte
+    Carlo. Cost is one single-bond solve (identical bonds), i.e. O(N * q-grid),
+    independent of n_bonds; with heterogeneous bonds it would be O(n).
+    """
+    V1, bid, ask = solve_single_bond(params)
+    return V1, bid, ask
+
+
+def separable_policy(params, bid, ask):
+    """Policy(n, Q) -> (len(Q), n_bonds, 2) quotes from a single-bond solution.
+    Unused sides at the inventory limits get delta_max (they cannot trade)."""
+    b = np.nan_to_num(bid, nan=params.delta_max)
+    a = np.nan_to_num(ask, nan=params.delta_max)
+
+    def policy(n, Q):
+        idx = Q + params.q_max
+        return np.stack([b[n][idx], a[n][idx]], axis=-1)
+    return policy
+
+
+def _grid(params, n_bonds):
+    m = 2 * params.q_max + 1
+    axes = np.meshgrid(*[params.q_grid] * n_bonds, indexing="ij")
+    Q = np.stack([a.ravel() for a in axes], axis=1)        # (S, n)
+    return m, Q
+
+
+def _shift_table(W_grid, n_bonds):
+    """W(q + m) for every move vector m in {-1,0,1}^n, flattened. Edge padding
+    fills out-of-grid points; those always carry zero probability."""
+    padded = np.pad(W_grid, 1, mode="edge")
+    m = W_grid.shape[0]
+    table = {}
+    for move in np.ndindex(*([3] * n_bonds)):
+        sl = tuple(slice(1 + (mv - 1), 1 + (mv - 1) + m) for mv in move)
+        table[tuple(mv - 1 for mv in move)] = padded[sl].ravel()
+    return table
+
+
+def _coupled_recursion(params, n_bonds, rho, policy=None, tol=1e-10, max_sweeps=100):
+    p = params
+    m, Q = _grid(p, n_bonds)
+    S = len(Q)
+    cov = covariance_matrix(p, n_bonds, rho)
+    risk = 0.5 * p.gamma * np.einsum("si,ij,sj->s", Q, cov, Q) * p.dt
+    can_buy = (Q < p.q_max).astype(float)                   # (S, n)
+    can_sell = (Q > -p.q_max).astype(float)
+    lo, hi = _bounds(p)
+    N = p.n_steps
+    moves = list(np.ndindex(*([3] * n_bonds)))
+    moves = [tuple(x - 1 for x in mv) for mv in moves]
+
+    V = np.empty((N + 1, S))
+    V[N] = -p.terminal_penalty * np.sum(Q ** 2, axis=1)
+    quotes = np.empty((N, S, n_bonds, 2))
+    sweeps_used = []
+
+    for n in range(N - 1, -1, -1):
+        W = (V[n + 1] - risk).reshape((m,) * n_bonds)
+        table = _shift_table(W, n_bonds)
+        if policy is None:
+            db = np.full((S, n_bonds), 1.0 / p.k)
+            da = np.full((S, n_bonds), 1.0 / p.k)
+        else:
+            fixed = p.clip_delta(policy(n, Q))
+            db, da = fixed[..., 0].copy(), fixed[..., 1].copy()
+
+        def move_probs(pb, pa):
+            # P(net move = +1, 0, -1) per bond
+            return {1: pb * (1 - pa), 0: pb * pa + (1 - pb) * (1 - pa), -1: pa * (1 - pb)}
+
+        def cond_expect(i, P):
+            """E[W(q + m)] over all bonds except i, for m_i = -1, 0, +1."""
+            out = {}
+            for mi in (-1, 0, 1):
+                acc = np.zeros(S)
+                for mv in moves:
+                    if mv[i] != mi:
+                        continue
+                    w = table[mv].copy()
+                    for j in range(n_bonds):
+                        if j != i:
+                            w *= P[j][mv[j]]
+                    acc += w
+                out[mi] = acc
+            return out
+
+        if policy is None:
+            for sweep in range(max_sweeps):
+                change = 0.0
+                for i in range(n_bonds):
+                    pb = p.fill_prob(db) * can_buy
+                    pa = p.fill_prob(da) * can_sell
+                    P = [move_probs(pb[:, j], pa[:, j]) for j in range(n_bonds)]
+                    E = cond_expect(i, P)
+                    c_bid = ((1 - pa[:, i]) * E[1] + pa[:, i] * E[0]) - ((1 - pa[:, i]) * E[0] + pa[:, i] * E[-1])
+                    new_b = np.clip(1.0 / p.k - c_bid, lo, hi)
+                    pb_i = p.fill_prob(new_b) * can_buy[:, i]
+                    c_ask = ((1 - pb_i) * E[-1] + pb_i * E[0]) - ((1 - pb_i) * E[0] + pb_i * E[1])
+                    new_a = np.clip(1.0 / p.k - c_ask, lo, hi)
+                    change = max(change, np.max(np.abs(new_b - db[:, i])), np.max(np.abs(new_a - da[:, i])))
+                    db[:, i], da[:, i] = new_b, new_a
+                if change < tol:
+                    break
+            sweeps_used.append(sweep + 1)
+
+        pb = p.fill_prob(db) * can_buy
+        pa = p.fill_prob(da) * can_sell
+        P = [move_probs(pb[:, j], pa[:, j]) for j in range(n_bonds)]
+        ev = np.zeros(S)
+        for mv in moves:
+            w = table[mv].copy()
+            for j in range(n_bonds):
+                w *= P[j][mv[j]]
+            ev += w
+        V[n] = np.sum(pb * db + pa * da, axis=1) + ev
+        quotes[n, ..., 0], quotes[n, ..., 1] = db, da
+
+    info = {"Q": Q, "max_sweeps": max(sweeps_used) if sweeps_used else 0}
+    return V, quotes, info
+
+
+def solve_coupled(params=MarketParams(), n_bonds=2, rho=0.0, **kw):
+    """Exact optimum of the n-bond problem with covariance risk penalty, on the
+    full inventory grid ((2 q_max + 1)^n states). Exponential in n_bonds:
+    intended as a ground-truth benchmark for n <= 3.
+
+    Quotes are found by coordinate ascent over the 2n quotes per state using
+    the same closed-form coordinate maximizer as the single-bond solver.
+    Returns (V[n, s], quotes[n, s, bond, side], info) with info["Q"] the
+    inventory vector of each flattened state s.
+    """
+    return _coupled_recursion(params, n_bonds, rho, None, **kw)
+
+
+def evaluate_coupled_policy(params, n_bonds, rho, policy):
+    """Exact expected objective of a Markov policy on the n-bond problem.
+    policy(n, Q[(S, n)]) -> (S, n, 2) quotes. Returns (V, Q)."""
+    V, _, info = _coupled_recursion(params, n_bonds, rho, policy)
+    return V, info["Q"]
+
+
+def state_index(Q, q):
+    """Row of Q equal to inventory vector q."""
+    return int(np.flatnonzero((Q == np.asarray(q)).all(axis=1))[0])

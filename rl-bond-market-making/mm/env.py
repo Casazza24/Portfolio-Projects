@@ -141,3 +141,30 @@ def simulate_single_bond(params, policy, n_episodes, seed=None):
         total += d_bid * buy + d_ask * sell + q * dS - p.running_penalty * q ** 2 * p.dt
     total -= p.terminal_penalty * q ** 2
     return total
+
+
+def simulate_multi_bond(params, n_bonds, rho, policy, n_episodes, seed=None):
+    """Vectorized Monte Carlo of the n-bond problem.
+
+    policy(n, Q[(E, n)]) -> (E, n, 2) quotes. Returns (objective per episode,
+    final inventories). Same per-step objective as MultiBondEnv.
+    """
+    p = params
+    rng = np.random.default_rng(seed)
+    C = correlation_matrix(n_bonds, rho)
+    cov = p.sigma ** 2 * C
+    L = np.linalg.cholesky(C)
+    q = np.zeros((n_episodes, n_bonds), dtype=int)
+    total = np.zeros(n_episodes)
+    for n in range(p.n_steps):
+        quotes = p.clip_delta(policy(n, q))
+        u = rng.random((2, n_episodes, n_bonds))
+        z = rng.standard_normal((n_episodes, n_bonds))
+        buy = (u[0] < p.fill_prob(quotes[..., 0])) & (q < p.q_max)
+        sell = (u[1] < p.fill_prob(quotes[..., 1])) & (q > -p.q_max)
+        q = q + buy.astype(int) - sell.astype(int)
+        dS = np.sqrt(p.dt) * p.sigma * (z @ L.T)
+        total += (np.sum(quotes[..., 0] * buy + quotes[..., 1] * sell + q * dS, axis=1)
+                  - 0.5 * p.gamma * np.einsum("ei,ij,ej->e", q, cov, q) * p.dt)
+    total -= p.terminal_penalty * np.sum(q ** 2, axis=1)
+    return total, q
