@@ -90,9 +90,11 @@ class Actor(nn.Module):
         if deterministic:
             return mean
         dist = torch.distributions.Normal(mean, std)
-        action = dist.sample()
-        action = torch.clamp(action, 0.01, 5.0)
-        log_prob = dist.log_prob(action).sum(-1)
+        raw = dist.sample()
+        # Score the sampled (raw) action. The clip is part of execution, not of the
+        # policy density; log_prob(clamped) would bias the policy gradient.
+        log_prob = dist.log_prob(raw).sum(-1)
+        action = torch.clamp(raw, 0.01, 5.0)
         return action, log_prob
 
 
