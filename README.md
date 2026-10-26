@@ -6,7 +6,7 @@ This repository is a collection of data science, machine learning, quantitative 
 
 | Name | Description | Tags | Status |
 |---|---|---|---|
-| [RL Bond Market Making](./rl-bond-market-making) | Reinforcement learning market maker benchmarked against a finite-difference solution to the Avellaneda-Stoikov HJB equation, extended to five correlated bonds. | ML, Quant | Complete |
+| [RL Bond Market Making](./rl-bond-market-making) | Reinforcement learning market maker for bond pricing under the Avellaneda-Stoikov model. Original results under revision; see project README. | ML, Quant | Revising |
 | [Consumer Credit Risk Analytics](./consumer-credit-risk-analytics) | Loan default prediction on 2.2M Lending Club loans comparing logistic regression against XGBoost, with an interactive dashboard. | DS, ML | Complete |
 | [Grid Energy Demand Forecasting](./grid-energy-demand-forecasting) | Spectral (FFT) analysis of PJM grid demand in MATLAB feeding engineered features into a gradient boosting forecaster in Python. | DS, DE | Complete |
 | [NYC Transit Efficiency Analysis](./nyc-transit-efficiency-analysis) | Investigation into what actually drives NYC subway ridership: weather versus calendar structure versus delays, with an interactive dashboard. | DA, DS | Complete |
